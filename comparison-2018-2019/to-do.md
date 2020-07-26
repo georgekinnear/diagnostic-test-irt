@@ -1,4 +1,0 @@
-- Take mirt::itemplot() output, plot all curves on one plot
-- Take a look at the 2x2 plot form George and replicate using above
-- Confirm plot(fit_2pl_2018, type = info) and plot(fit_2pl_2019, type = info) comparison
-- Once happy with these, permute 32 out of 36 questions for 2018 data, rerun and record a statistic for each, show result wouldn't change much with other selections
