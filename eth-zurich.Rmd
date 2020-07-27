@@ -176,6 +176,7 @@ Do students from different programmes of study have different distributions of a
 # produce list of all the relevant file names
 # (match only the courses beginning 401, i.e. exclude "all.csv")
 files <- dir_ls("data/", recurse = TRUE, regexp = "401.*.csv")
+files <- files[!str_detect(files, "q36")]
 
 # read all files and add a column called file_path to identify them
 eth_entry_test <- vroom(files, id = "file_path")
