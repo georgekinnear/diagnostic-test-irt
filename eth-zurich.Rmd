@@ -1,12 +1,12 @@
 ---
 title: "Analysis of the ETH Zurich data; comparing 2018 to 2019"
-author: "Based on work by George Kinnear"
-date: "2020-06-04"
-output: 
+author: "Mine Çetinkaya-Rundel, George Kinnear"
+date: '2020-06-04'
+output:
   html_document:
-    toc: true
-    toc_float: true
-editor_options: 
+    toc: yes
+    toc_float: yes
+editor_options:
   chunk_output_type: console
 ---
 
@@ -167,6 +167,18 @@ gt(tidy_2pl) %>%
     b_CI_97.5 = "97.5%"
   )
 ```
+
+```{r wright-map}
+tidy_2pl %>% 
+  mutate(qnum = parse_number(Question)) %>% 
+  ggplot(aes(x = qnum, y = b_est)) +
+  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0.2) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Question",
+       y = "Difficulty")
+```
+
 
 ### Comparing years and classes
 
