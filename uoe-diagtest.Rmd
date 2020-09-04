@@ -166,7 +166,7 @@ https://uoe.sharepoint.com/:u:/r/sites/IRTWorkingGroup/Shared%20Documents/Shared
 In the original report, Chito had a way of dealing with this involving a matrix of multipliers. I don't understand it well, but I think the idea is to multiply all the scores by suitable factors so that all the partial marks become integers. From what I understand of what Simon wrote, though, that is maybe not sufficient - e.g. when it comes to working out expected scores on items.
 
 (A) Chito's approach
-Again, this does not run and would need lots of tweaking to get it working
+Again, this does not run and would need lots of tweaking to get it working. See source in https://github.com/mine-cetinkaya-rundel/irt-eth/blob/master/MDT2018_FINAL/code/R_code_export/IMPRV.r and the files beginning f_ and h_ in https://github.com/mine-cetinkaya-rundel/irt-eth/tree/master/MDT2018_FINAL/code
 ```{r eval=FALSE, include=FALSE}
 
 ## ----- Section 4.5 Concurrent -----
