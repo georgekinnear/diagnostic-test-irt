@@ -310,10 +310,10 @@ print(xtable(eap.dsc, digits=c(0,0,2,2,2,2,2,2)))
 Massaging the mark categories for mirt - but there seems to be an error here, and I don't really understand the function.
 ```{r}
 # This function written by Simon Taylor for his contribution to the IRT Working Group
+# NB - this issue seems related: https://github.com/philchalmers/mirt/issues/163 (and the relevel_items gives a more tidyverse way of re-levelling, though it doesn't retain knowledge of the correspondence between old and new scores)
 my_recategorise <- function(data, MAX_MARKS = NULL){
   MARK_CATEGORIES <- lapply(apply(data, 2, unique), sort)
   MAX <- unlist(lapply(MARK_CATEGORIES,max))
-  return(list(mcat = MARK_CATEGORIES, maxmark = MAX))
   if(is.null(MAX_MARKS)){
     MAX_MARKS <- MAX
   }else{
@@ -323,7 +323,11 @@ my_recategorise <- function(data, MAX_MARKS = NULL){
   data_recat <- data
   for(item in 1:ncol(data)){
     for(subj in 1:nrow(data)){
-      data_recat[subj,item] <- which(MARK_CATEGORIES[[item]] %in% data[subj,item])
+      if(is.na(data[subj,item])) {
+        data_recat[subj,item] <- NA
+      } else {
+        data_recat[subj,item] <- which(MARK_CATEGORIES[[item]] %in% data[subj,item])
+      }
     }
   }
   return(list(data_recat = data_recat, MARK_CATEGORIES = MARK_CATEGORIES, MAX_MARKS = MAX_MARKS))
@@ -331,8 +335,9 @@ my_recategorise <- function(data, MAX_MARKS = NULL){
 
 item_data_relabelled <- my_recategorise(data = mdt_all_data, 
                                         MAX_MARKS = rep(5, 20))
-
-
+head(item_data_relabelled$data_recat$Q1)
+item_data_relabelled$MARK_CATEGORIES$Q1
+head(mdt_all_data %>% drop_na %>% select(Q1))
 ```
 
 ### (C) Naive version
