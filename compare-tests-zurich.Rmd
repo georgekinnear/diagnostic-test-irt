@@ -29,12 +29,12 @@ library(plotly)    # For interactive plots
 
 # 1. Data
 
-Load the student scores for the test - here we load the 2018 ETH Zurich test data:
+Load the student scores for the test - here we load the ETH Zurich test data, downloaded from https://pontifex.ethz.ch/s21t5/rate/
 
 ```{r load-all-data, echo=FALSE, message=FALSE}
 # produce list of all the relevant file names
 # (match only "all.csv" in the -q36 versions)
-files_pre <- dir_ls("data/", recurse = TRUE, regexp = "-q36.*all.*.csv")
+files_pre <- dir_ls("data-eth/", recurse = TRUE, regexp = "-q36/s21t-000.*.csv")
 
 # read all files and add a column called file_path to identify them
 scores_pre <- vroom(files_pre, id = "file_path")
@@ -42,7 +42,7 @@ scores_pre <- vroom(files_pre, id = "file_path")
 # parse file_path column into year and class
 test_scores_pre <- scores_pre %>%
   mutate(
-    file_path = str_remove(file_path, "data/"),
+    file_path = str_remove(file_path, "data-eth/"),
     file_path = str_remove(file_path, "-q36"),
     file_path = str_remove(file_path, ".csv"),
     ) %>%
@@ -51,7 +51,7 @@ test_scores_pre <- scores_pre %>%
 
 # produce list of all the relevant file names
 # (match only "all.csv" in the -q32 versions)
-files_post <- dir_ls("data/", recurse = TRUE, regexp = "-q32.*all.*.csv")
+files_post <- dir_ls("data-eth/", recurse = TRUE, regexp = "-q32/s21t-000.*.csv")
 
 # read all files and add a column called file_path to identify them
 scores_post <- vroom(files_post, id = "file_path")
@@ -59,7 +59,7 @@ scores_post <- vroom(files_post, id = "file_path")
 # parse file_path column into year and class
 test_scores_post <- scores_post %>%
   mutate(
-    file_path = str_remove(file_path, "data/"),
+    file_path = str_remove(file_path, "data-eth/"),
     file_path = str_remove(file_path, "-q32"),
     file_path = str_remove(file_path, ".csv"),
     ) %>%
@@ -67,17 +67,34 @@ test_scores_post <- scores_post %>%
   # relabel the columns to use B rather than A for the question names
   rename_with(~ str_replace(., "^A", "B"))
 
-test_versions <- read_csv("data/eth-metadata.csv") %>% 
+#
+# Join data from both test versions together
+#
+# This achieves something like the planned function tidymirt::combined_test_versions
+# see https://github.com/mine-cetinkaya-rundel/tidymirt/issues/1
+#
+
+# construct unique item names that show where each item appeared on each version
+# e.g. A4_B7 means the item was Q4 on version A and Q7 on version B
+# (A0 and B0 are used to indicate the question did not appear on that version)
+test_versions <- read_csv("data-eth/eth-metadata.csv") %>% 
   mutate(
     label = case_when(
       !is.na(pre) & !is.na(post) ~ str_glue("{pre}_{post}"),
       !is.na(pre) & is.na(post) ~ str_glue("{pre}_B0"),
       is.na(pre) & !is.na(post) ~ str_glue("A0_{post}"),
     )
+  ) %>% 
+  mutate(
+    outcome = case_when(
+      !is.na(pre) & !is.na(post) ~ "unchanged",
+      !is.na(pre) & is.na(post) ~ "removed",
+      is.na(pre) & !is.na(post) ~ "added",
+    )
   )
 
 # helper function - given a df and two character vectors of the same length, this will
-# rename the columns of df replacing values from old_names with corresponding values from new_names
+# rename the columns of df, replacing values from old_names with corresponding values from new_names
 replace_names <- function(df, old_names, new_names) {
   name_lookup <- bind_cols("old" = old_names, "new" = new_names) %>%
     # remove any rows with NA, since that will cause problems for rename_with
@@ -86,8 +103,6 @@ replace_names <- function(df, old_names, new_names) {
     rename_with(.fn = ~name_lookup$new, .cols = name_lookup$old)
 }
 
-# this achieves something like the planned function tidymirt::combined_test_versions
-# see https://github.com/mine-cetinkaya-rundel/tidymirt/issues/1
 test_scores = bind_rows(
   "pre" = test_scores_pre %>%
     replace_names(old_names = test_versions$pre, new_names = test_versions$label),
@@ -95,6 +110,15 @@ test_scores = bind_rows(
     replace_names(old_names = test_versions$post, new_names = test_versions$label),
   .id = "test_version"
 )
+
+# The data from ETH Zurich includes a score of 2 if the student selected "I don't know"
+# Here we replace those scores with NA, to reflect essentially missing data
+# TODO - consider mapping this to 0 instead, as it reflects being "not correct"
+test_scores <- test_scores %>% 
+  mutate(across(starts_with("A"), ~ na_if(., 2))) %>%
+  # A few students (23 out of 9671) gave "I don't know" as their answer to every question
+  # Here we remove them, since rows with all NAs cause problems for mirt
+  filter(!if_all(starts_with("A"), is.na))
 ```
 
 ```{r data-peek}
@@ -104,11 +128,11 @@ head(test_scores_post)
 
 ## Data summary
 
-The number of responses from each class:
+The number of responses from each cohort:
 
 ```{r skim-classes}
 test_scores %>% 
-  group_by(year, class) %>% 
+  group_by(year) %>% 
   tally() %>% 
   gt() %>% 
   data_color(
@@ -144,16 +168,18 @@ Before applying IRT, we should check that the data satisfies the assumptions nee
 
 ### Local independence
 
-This plot shows the correlations between scores on each pair of items:
+This plot shows the correlations between scores on each pair of items -- note that it is restricted to only those items that appear on both versions of the test, since the plotting package did not deal well with missing data:
 
 ```{r corr-plot}
 item_scores <- test_scores %>% 
   select(-class, -year, -test_version)
 
-cor_ci <- psych::corCi(item_scores, plot = FALSE)
+item_scores_unchanged_only <- item_scores %>% 
+  select(!contains("B0")) %>% select(!contains("A0"))
 
-# TODO - this plot does not work because of NAs
-#psych::cor.plot.upperLowerCi(cor_ci)
+cor_ci <- psych::corCi(item_scores_unchanged_only, plot = FALSE)
+
+psych::cor.plot.upperLowerCi(cor_ci)
 ```
 
 There are a few correlations that are not significantly different from 0:
@@ -168,13 +194,29 @@ cor_ci$ci %>%
   fmt_number(columns = 2:4, decimals = 3)
 ```
 
+Here we redo the correlation calculations with all the items, and check that there are still few cases where the correlations close to 0:
+
+```{r}
+cor_ci2 <- psych::corCi(item_scores, plot = FALSE)
+cor_ci2$ci %>% 
+  as_tibble(rownames = "corr") %>% 
+  filter(p > 0.05) %>% 
+  arrange(-p) %>% 
+  select(-contains(".e")) %>% 
+  gt() %>% 
+  fmt_number(columns = 2:4, decimals = 3)
+```
+
+
 The overall picture is that the item scores are well correlated with each other.
 
 ### Dimensionality
 
+Here we again focus on the subset of items that appeared in both tests.
+
 ```{r fa-checks}
-structure <- check_factorstructure(item_scores)
-n <- n_factors(item_scores)
+structure <- check_factorstructure(item_scores_unchanged_only)
+n <- n_factors(item_scores_unchanged_only)
 ```
 
 ```{r fa-structure-check, echo=FALSE, results="asis"}
@@ -200,13 +242,17 @@ summary(n) %>% gt()
 
 
 ```{r fa-scree}
-fa.parallel(item_scores, fa = "fa")
+fa.parallel(item_scores_unchanged_only, fa = "fa")
 ```
 
 ### 1 Factor
 
 ```{r fa1}
-fitfact <- factanal(item_scores, factors = 1, rotation = "varimax")
+item_scores_unchanged_only_and_no_na <- item_scores_unchanged_only %>%
+  mutate(
+    across(everything(), ~replace_na(.x, 0))
+  )
+fitfact <- factanal(item_scores_unchanged_only_and_no_na, factors = 1, rotation = "varimax")
 print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load <- tidy(fitfact)
@@ -240,6 +286,7 @@ The process is to first fit the model, and save the result as a model object tha
 ```{r fit-mirt, warning=FALSE, message=FALSE}
 fit_2pl <- mirt(
   data = item_scores, # just the columns with question scores
+  #removeEmptyRows = TRUE, 
   model = 1,          # number of factors to extract
   itemtype = "2PL",   # 2 parameter logistic model
   SE = TRUE           # estimate standard errors
@@ -306,10 +353,11 @@ Let's see what this does to a single element in `coefs`:
 tidy_mirt_coefs(coefs_2pl[1])
 ```
 
-And now let's map it over all 32 elements of coefs:
+And now let's map it over all elements of coefs:
 
 ```{r map-tidy-mirt-coefs}
-tidy_2pl <- map_dfr(coefs_2pl[1:32], tidy_mirt_coefs, .id = "Question")
+# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
+tidy_2pl <- map_dfr(head(coefs_2pl, -1), tidy_mirt_coefs, .id = "Question")
 ```
 
 A quick peek at the result:
@@ -320,7 +368,7 @@ tidy_2pl
 
 And a nicely formatted table of the result:
 
-```{r tabulate-tidy-output, eval=FALSE}
+```{r tabulate-tidy-output}
 gt(tidy_2pl) %>%
   fmt_number(columns = contains("_"), decimals = 3) %>%
   data_color(
@@ -346,11 +394,28 @@ gt(tidy_2pl) %>%
 ```{r wright-map}
 tidy_2pl %>% 
   mutate(qnum = parse_number(Question)) %>% 
-  ggplot(aes(x = qnum, y = b_est)) +
+  ggplot(aes(x = qnum, y = b_est, label = Question)) +
   geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0.2) +
+  geom_text(colour = "grey") +
   geom_point() +
   theme_minimal() +
   labs(x = "Question",
+       y = "Difficulty")
+```
+
+This shows the difficulty and discrimination of each of the questions, highlighting those that were added or removed:
+
+```{r}
+tidy_2pl %>% 
+  left_join(test_versions, by = c("Question" = "label")) %>% 
+  mutate(qnum = parse_number(Question)) %>% 
+  ggplot(aes(x = a_est, y = b_est, label = ifelse(outcome=="unchanged", "", Question), colour = outcome)) +
+  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0.1, alpha = 0.5) +
+  geom_errorbar(aes(xmin = a_CI_2.5, xmax = a_CI_97.5), width = 0.1, alpha = 0.5) +
+  geom_text_repel() +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Discrimination",
        y = "Difficulty")
 ```
 
@@ -364,28 +429,13 @@ Do students from different programmes of study have different distributions of a
 Compare the distribution of abilities in the year groups (though in this case there is only one).
 
 ```{r viz-years}
-ggplot(test_scores, aes(F1, fill = as.factor(year), colour = as.factor(year))) +
-  geom_density(alpha=0.5) + 
+ggplot(test_scores, aes(F1, y = year, fill = as.factor(year), colour = as.factor(year))) +
+  geom_density_ridges(alpha=0.5) + 
   scale_x_continuous(limits = c(-3.5,3.5)) +
   labs(title = "Density plot", 
        subtitle = "Ability grouped by year of taking the test", 
        x = "Ability", y = "Density",
        fill = "Year", colour = "Year") +
-  theme_minimal()
-```
-
-### Differences between classes
-
-Compare the distribution of abilities in the various classes.
-
-```{r viz-classes}
-ggplot(test_scores, aes(x = F1, y = class, colour = class, fill = class)) +
-  geom_density_ridges(alpha = 0.5) + 
-  scale_x_continuous(limits = c(-3.5,3.5)) +
-  guides(fill = FALSE, colour = FALSE) +
-  labs(title = "Density plot", 
-       subtitle = "Ability grouped by class of taking the test", 
-       x = "Ability", y = "Class") +
   theme_minimal()
 ```
 
