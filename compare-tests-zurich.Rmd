@@ -145,20 +145,32 @@ Mean and standard deviation for each item:
 
 ```{r skim-all-data}
 test_scores %>% 
-  select(-class) %>% 
+  select(-class, -test_version) %>% 
   group_by(year) %>% 
   skim_without_charts() %>% 
   select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
-  group_by(year) %>% 
-  gt() %>% 
-  fmt_number(columns = contains("numeric"), decimals = 3) %>%
-  data_color(
-    columns = c("numeric.mean"),
-    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
-  ) %>%
+  rename(complete = complete_rate) %>% 
+  # make the table wider, i.e. with separate columns for each year's results, with the year at the start of each column name
+  pivot_wider(names_from = year, values_from = -c(skim_variable, year), names_glue = "{year}__{.value}") %>% 
+  # put the columns in order by year
+  select(sort(names(.))) %>% 
+  select(skim_variable, everything()) %>% 
+  # use GT to make the table look nice
+  gt(rowname_col = "skim_variable") %>% 
+  # group the columns from each year
+  tab_spanner_delim(delim = "__") %>%
+  fmt_number(columns = contains("numeric"), decimals = 2) %>%
+  fmt_percent(columns = contains("complete"), decimals = 0) %>% 
+  # change all the numeric.mean and numeric.sd column names to Mean and SD
   cols_label(
-    numeric.mean = "Mean",
-    numeric.sd = "SD"
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.mean"), label = "Mean") %>% deframe()
+  ) %>% 
+  cols_label(
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.sd"), label = "SD") %>% deframe()
+  ) %>%
+  data_color(
+    columns = contains("numeric.mean"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
   )
 ```
 
@@ -357,7 +369,8 @@ And now let's map it over all elements of coefs:
 
 ```{r map-tidy-mirt-coefs}
 # use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
-tidy_2pl <- map_dfr(head(coefs_2pl, -1), tidy_mirt_coefs, .id = "Question")
+tidy_2pl <- map_dfr(head(coefs_2pl, -1), tidy_mirt_coefs, .id = "Question") %>% 
+  left_join(test_versions, by = c("Question" = "label"))
 ```
 
 A quick peek at the result:
@@ -369,8 +382,12 @@ tidy_2pl
 And a nicely formatted table of the result:
 
 ```{r tabulate-tidy-output}
-gt(tidy_2pl) %>%
-  fmt_number(columns = contains("_"), decimals = 3) %>%
+tidy_2pl %>%
+  select(-pre,-post,-notes) %>% 
+  group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
   data_color(
     columns = contains("a_"),
     colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
@@ -407,11 +424,19 @@ This shows the difficulty and discrimination of each of the questions, highlight
 
 ```{r}
 tidy_2pl %>% 
-  left_join(test_versions, by = c("Question" = "label")) %>% 
   mutate(qnum = parse_number(Question)) %>% 
-  ggplot(aes(x = a_est, y = b_est, label = ifelse(outcome=="unchanged", "", Question), colour = outcome)) +
-  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0.1, alpha = 0.5) +
-  geom_errorbar(aes(xmin = a_CI_2.5, xmax = a_CI_97.5), width = 0.1, alpha = 0.5) +
+  ggplot(aes(
+    x = a_est,
+    y = b_est,
+    label = case_when(
+      outcome == "unchanged" ~ "",
+      outcome == "removed" ~ pre,
+      outcome == "added" ~ post
+    ),
+    colour = outcome
+  )) +
+  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0, alpha = 0.5) +
+  geom_errorbar(aes(xmin = a_CI_2.5, xmax = a_CI_97.5), width = 0, alpha = 0.5) +
   geom_text_repel() +
   geom_point() +
   theme_minimal() +
