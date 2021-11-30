@@ -29,12 +29,23 @@ library(plotly)    # For interactive plots
 
 # 1. Data
 
-Load the student scores for the test - here we load the 2018 ETH Zurich test data:
+Information about the test:
+
+```{r load-test-info, echo=FALSE, message=FALSE}
+item_info <- read_csv("data-eth/eth-metadata.csv") %>% 
+  select(question = pre, description) %>% 
+  filter(!is.na(question))
+
+item_info %>%
+  gt()
+```
+
+Load the student scores for the test - here we load the 2017 and 2018 ETH Zurich test data:
 
 ```{r load-all-data, echo=FALSE, message=FALSE}
 # produce list of all the relevant file names
-# (match only the courses beginning 401, i.e. exclude "all.csv")
-files <- dir_ls("data/2018-q36/", recurse = TRUE, regexp = "401.*.csv")
+# (match only "all.csv" in the "-q36" versions of the test)
+files <- dir_ls("data-eth/", recurse = TRUE, regexp = "-q36/s21t-000.*.csv")
 
 # read all files and add a column called file_path to identify them
 eth_entry_test <- vroom(files, id = "file_path")
@@ -42,7 +53,7 @@ eth_entry_test <- vroom(files, id = "file_path")
 # parse file_path column into year and class
 test_scores <- eth_entry_test %>%
   mutate(
-    file_path = str_remove(file_path, "data/"),
+    file_path = str_remove(file_path, "data-eth/"),
     file_path = str_remove(file_path, "-q36"),
     file_path = str_remove(file_path, ".csv"),
     ) %>%
@@ -50,7 +61,19 @@ test_scores <- eth_entry_test %>%
 ```
 
 ```{r data-peek}
-head(test_scores)
+test_scores
+```
+
+## Missing data
+
+The data includes scores of `2` for the "I don't know" answer option. We replace these with `NA`:
+
+```{r}
+test_scores <- test_scores %>% 
+  mutate(across(starts_with("A"), ~ na_if(., 2))) %>%
+  # A few students gave "I don't know" as their answer to every question
+  # Here we remove them, since rows with all NAs cause problems for mirt
+  filter(!if_all(starts_with("A"), is.na))
 ```
 
 ## Data summary
@@ -94,6 +117,8 @@ test_scores %>%
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
 
 ### Local independence
+
+> **TODO** Perhaps just remove this section? See the later section on local independence which is consistent with DeMars p.48
 
 This plot shows the correlations between scores on each pair of items:
 
@@ -155,8 +180,13 @@ fa.parallel(item_scores, fa = "fa")
 
 ### 1 Factor
 
+We use the `factanal` function to fit a 1-factor model. Note that this function cannot handle missing data, so we set the `NA` scores to `0` for this analysis.
+
 ```{r fa1}
-fitfact <- factanal(item_scores, factors = 1, rotation = "varimax")
+fitfact <- factanal(item_scores %>%
+                      mutate(across(everything(), ~ replace_na(.x, 0))),
+                    factors = 1,
+                    rotation = "varimax")
 print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load <- tidy(fitfact)
@@ -170,6 +200,19 @@ ggplot(load, aes(x = fl1, y = 0)) +
   theme_minimal()
 ```
 
+```{r}
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(item_info, by = "question") %>% 
+  arrange(-factor_loading) %>% 
+  gt() %>%
+  data_color(
+    columns = contains("factor"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  )
+```
+
+> **TODO** Meike to offer some comments here about whether there is any apparent meaning in the factor
 
 ```{r}
 # To proceed with the IRT analysis, comment out the following line before knitting
@@ -195,6 +238,36 @@ fit_2pl <- mirt(
   SE = TRUE           # estimate standard errors
   )
 ```
+
+## Local independence
+
+We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+residuals_2pl <- residuals(fit_2pl, type = "Q3") %>% data.frame
+```
+```{r}
+residuals_2pl  %>% as.matrix() %>% 
+  corrplot::corrplot(type = "upper")
+```
+
+This shows that most item pairs are independent, with only one pair showing cause for concern:
+
+```{r}
+residuals_2pl %>%
+  rownames_to_column(var = "q1") %>%
+  as_tibble() %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  filter(abs(Q3_score) > 0.2) %>% 
+  filter(parse_number(q1) < parse_number(q2)) %>%
+  gt()
+```
+
+Items A18 and A19 are on the product and quotient rules.
+
+Given that this violation of the local independence assumption is very mild, we proceed using this model.
+
+## Model parameters
 
 We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
 
@@ -293,17 +366,26 @@ gt(tidy_2pl) %>%
   )
 ```
 
-```{r wright-map}
+```{r}
 tidy_2pl %>% 
   mutate(qnum = parse_number(Question)) %>% 
-  ggplot(aes(x = qnum, y = b_est)) +
-  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0.2) +
+  ggplot(aes(
+    x = a_est,
+    y = b_est
+  )) +
+  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0, alpha = 0.5) +
+  geom_errorbar(aes(xmin = a_CI_2.5, xmax = a_CI_97.5), width = 0, alpha = 0.5) +
+  geom_text_repel(aes(label = Question), alpha = 0.5) +
   geom_point() +
   theme_minimal() +
-  labs(x = "Question",
+  labs(x = "Discrimination",
        y = "Difficulty")
 ```
 
+```{r save-2pl-results}
+tidy_2pl %>% 
+  write_csv("data-eth/OUT_2pl-results-pre-only.csv")
+```
 
 ## Comparing years and classes
 
