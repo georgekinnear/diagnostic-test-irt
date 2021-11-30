@@ -110,10 +110,22 @@ test_scores = bind_rows(
     replace_names(old_names = test_versions$post, new_names = test_versions$label),
   .id = "test_version"
 )
+```
 
-# The data from ETH Zurich includes a score of 2 if the student selected "I don't know"
-# Here we replace those scores with NA, to reflect essentially missing data
-# TODO - consider mapping this to 0 instead, as it reflects being "not correct"
+The scores are:
+
+* 0 if the student gave an incorrect response
+* 1 if the student gave a correct response
+* 2 if the student chose the "I don't know" answer option
+* NA if there was no response recorded
+
+```{r data-peek}
+test_scores
+```
+
+For this analysis, we replace the "2 = I don't know" scores with NA, so that they will be treated as missing data.
+
+```{r}
 test_scores <- test_scores %>% 
   mutate(across(starts_with("A"), ~ na_if(., 2))) %>%
   # A few students (23 out of 9671) gave "I don't know" as their answer to every question
@@ -121,10 +133,9 @@ test_scores <- test_scores %>%
   filter(!if_all(starts_with("A"), is.na))
 ```
 
-```{r data-peek}
-head(test_scores_pre)
-head(test_scores_post)
-```
+**TODO** - consider mapping this to 0 instead, as it reflects being "not correct"
+
+**TODO** - also try fitting a 3PL model to see if the "don't know" responses reduce the guessing parameter
 
 ## Data summary
 
@@ -182,6 +193,8 @@ Before applying IRT, we should check that the data satisfies the assumptions nee
 
 This plot shows the correlations between scores on each pair of items -- note that it is restricted to only those items that appear on both versions of the test, since the plotting package did not deal well with missing data:
 
+**TODO** - check with Mine that this is a valid way to proceed (throwing out questions with missing data)
+
 ```{r corr-plot}
 item_scores <- test_scores %>% 
   select(-class, -year, -test_version)
@@ -193,6 +206,8 @@ cor_ci <- psych::corCi(item_scores_unchanged_only, plot = FALSE)
 
 psych::cor.plot.upperLowerCi(cor_ci)
 ```
+
+**TODO** - add some notes here to explain how to interpret all of this!
 
 There are a few correlations that are not significantly different from 0:
 
@@ -278,6 +293,18 @@ ggplot(load, aes(x = fl1, y = 0)) +
   theme_minimal()
 ```
 
+```{r}
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(test_versions %>% select(question = label, description), by = "question") %>% 
+  arrange(-factor_loading) %>% 
+  gt() %>%
+  data_color(
+    columns = contains("factor"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  )
+```
+
 
 ```{r}
 # To proceed with the IRT analysis, comment out the following line before knitting
@@ -304,7 +331,35 @@ fit_2pl <- mirt(
   SE = TRUE           # estimate standard errors
   )
 ```
+## Local independence
 
+We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+residuals_2pl <- residuals(fit_2pl, type = "Q3") %>% data.frame
+```
+```{r}
+residuals_2pl  %>% as.matrix() %>% 
+  corrplot::corrplot(type = "upper")
+```
+
+This shows that most item pairs are independent, with only one pair showing cause for concern:
+
+```{r}
+residuals_2pl %>%
+  rownames_to_column(var = "q1") %>%
+  as_tibble() %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  filter(abs(Q3_score) > 0.2) %>% 
+  filter(parse_number(q1) < parse_number(q2)) %>%
+  gt()
+```
+
+Items A18 and A19 are on the product and quotient rules.
+
+Given that this violation of the local independence assumption is very mild (particularly as A19 is one of the questions removed from the test), we proceed using this model.
+
+## Model parameters
 We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
 
 ```{r augment-with-f1}
@@ -407,6 +462,12 @@ tidy_2pl %>%
     b_CI_97.5 = "97.5%"
   )
 ```
+
+```{r save-2pl-results}
+tidy_2pl %>% 
+  write_csv("data-eth/OUT_2pl-results.csv")
+```
+
 
 ```{r wright-map}
 tidy_2pl %>% 
