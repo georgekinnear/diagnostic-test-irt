@@ -1,0 +1,367 @@
+---
+title: "Analysis of the University of Edinburgh Mathematics Diagnostic Test"
+author: "Mine Çetinkaya-Rundel, George Kinnear"
+date: '2020-09-04'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r load-packages, message=FALSE, include=FALSE}
+library(mirt)      # For IRT analysis
+library(psych)     # For factor analysis
+library(tidyverse) # For data wrangling and visualisation
+library(reshape)   # For reshaping nested lists
+library(vroom)     # For reading in many files at once
+library(broom)     # For tidying model output
+library(fs)        # For file system operations
+library(gt)        # For formatting tables
+library(knitr)     # For markdown tables
+library(ggrepel)   # For labelling points without overlap
+library(skimr)     # For data frame level summary
+library(ggridges)  # For ridge plots
+library(plotly)    # For interactive plots
+```
+
+## Data
+
+Load the data from the pre-2017 and post-2017 versions of the test, and combine them into a single table:
+
+```{r load-all-data, message=FALSE}
+# load data
+mdt_pre <- read_csv('uoe-data/ANON_DiagTest13to16.csv') %>%
+  relocate(AnonID)
+mdt_2017 <- read_csv('uoe-data/ANON_DiagTest17.csv',
+                     na = c("", "-")) %>%
+  relocate(AnonID) %>% 
+  mutate(year = 2017)
+mdt_2018 <- read_csv('uoe-data/ANON_DiagTest18A.csv',
+                     na = c("", "-")) %>%
+  relocate(AnonID) %>% 
+  mutate(year = 2018)
+mdt_post <- bind_rows(mdt_2017, mdt_2018) %>% 
+  rename_with( ~ str_replace(., "..5.00", ""),
+               .cols = contains("Q..")) %>% 
+  rename_with( ~ str_replace(., "Q..", "Q"),
+               .cols = contains("Q.."))
+  
+
+
+# TODO: tidymirt::combine_test_versions()
+# cf. ltm::testEquatingData
+
+# mdt_all_data <- combine_test_versions(mdt_pre, mdt_post)
+
+# hacking this for now
+mdt_all_data <- bind_rows(
+  mdt_pre %>% select(contains("Q")),
+  mdt_post %>% select(contains("Q")),
+)
+```
+
+Skim an overview of the data:
+
+```{r skim-all-data}
+skim(mdt_all_data) %>% kable()
+```
+
+## Data cleaning
+
+1. For students who took the test more than once, consider the attempt with the highest scores only and remove the others;
+
+2. Eliminate the students who scored three or more zeros in the 5 easiest questions in the
+second-half of the test; and
+
+3. Add the students scoring more than 30 marks in total back to the sample.
+
+```{r}
+# TODO
+```
+
+
+## Testing IRT assumptions
+
+TODO - this section is just old code from IMPRV.r that will not run without lots of tweaks. See section 4.2 of the report for the expected output.
+
+```{r eval=FALSE, include=FALSE}
+
+## ----- Section 4.2.1 Local independence -----
+# Explore degree of pairwise associations
+if (file.exists('../robject/IMPRV_cortest17.Rdata')) {
+  load('../robject/IMPRV_cortest17.Rdata')
+} else {
+  cortest17 <- rcor.test(mdt17_clean[1:20], method="kendall")
+  save(cortest17, file="../robject/IMPRV_cortest17.Rdata")
+}
+cortest17_sorted <- as.data.frame(cortest17$p.values[order(-cortest17$p.values[,'pvals']),])
+cortest17_sorted[,1:2] <- apply(cortest17_sorted[,1:2], c(1,2), function (x) {
+    group_17$Item[x]
+})
+# LaTeX: tab:IMPRV_cortest
+print(xtable(cortest17_sorted[1:6,], digits=c(0,0,0,4), align=rep('c',4)), include.rownames=F)
+
+# pdf('../fig/IMPRV_cor_17.pdf', width=7, height=6)
+mycor_plot(cortest17, group_17)
+# dev.off()
+
+## ----- Section 4.2.2 Dimensionality -----
+# pdf('../fig/IMPRV_EFA_scree.pdf', width=7, height=4)
+fp_17 <- fa.parallel(mdt17_clean[1:20], fm='minres', fa='fa')
+# dev.off()
+
+# 1 factor
+(efa_17_1 <- fa(mdt17_clean[1:20], nfactors = 1))
+
+efa_17_1_load <- data.frame(Type=group_17$Type, MR1=efa_17_1$loadings[,1])
+efa_17_1_load$sig[efa_17_1_load$MR1 > 0.25] <- "*"
+# LaTeX: tab:IMPRV_EFA_17_1
+print(xtable(efa_17_1_load[1:10,], digits=c(0,0,3,0), align=c('l','c','c','c')))
+print(xtable(efa_17_1_load[11:20,], digits=c(0,0,3,0), align=c('l','c','c','c')))
+
+# pdf("../fig/IMPRV_EFA_17_1.pdf", width=7, height=2)
+ggplot(efa_17_1_load, aes(x=MR1, y=rep(0,20), color=Type)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = rownames(efa_17_1_load)), show.legend=F) +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) + 
+  labs(x='Factor 1', 
+       title='Standardised Loadings', 
+       subtitle='Based upon correlation matrix')
+# dev.off()
+
+# 2 factor
+(efa_17_2 <- fa(mdt17_clean[1:20], nfactors = 2))
+
+efa_17_2_load <- data.frame(Type=group_17$Type, MR1=efa_17_2$loadings[,1], MR2=efa_17_2$loadings[,2])
+# pdf("../fig/IMPRV_EFA_17_2.pdf", width=7, height=5)
+ggplot(efa_17_2_load, aes(x=MR1, y=MR2, color=Type)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = rownames(efa_17_2_load)), show.legend=F) + 
+  coord_fixed() + 
+  scale_y_continuous(limits=c(-0.15,0.75)) + 
+  scale_x_continuous(limits=c(-0.15,0.75)) + 
+  labs(x='Factor 1', y='Factor 2', 
+       title='Standardised Loadings', 
+       subtitle='Based upon correlation matrix')
+# dev.off()
+
+efa_17_2_load[efa_17_2_load < 0.25] <- NA
+# LaTeX: tab:IMPRV_EFA_17_2
+print(xtable(efa_17_2_load[1:10,], digits=c(0,0,3,3), align=c('l','c','c','c')))
+print(xtable(efa_17_2_load[11:20,], digits=c(0,0,3,3), align=c('l','c','c','c')))
+```
+
+
+## Concurrent parameter calibration
+
+This is where mirt is used to fit the IRT model. This should operate on mdt_all_data, that came from using the tidymirt::combine_test_versions() function.
+
+HOWEVER - for polytomous items there is a difficulty with the way the partial credit is handled, if the steps between awarded marks are uneven. Simon Taylor wrote about that in his contribution to the IRT Working Group:
+https://uoe.sharepoint.com/:u:/r/sites/IRTWorkingGroup/Shared%20Documents/Shared%20data/IRT-Exam_v2.html?csf=1&web=1&e=bkPx8e
+
+In the original report, Chito had a way of dealing with this involving a matrix of multipliers. I don't understand it well, but I think the idea is to multiply all the scores by suitable factors so that all the partial marks become integers. From what I understand of what Simon wrote, though, that is maybe not sufficient - e.g. when it comes to working out expected scores on items.
+
+(A) Chito's approach
+Again, this does not run and would need lots of tweaking to get it working. See source in https://github.com/mine-cetinkaya-rundel/irt-eth/blob/master/MDT2018_FINAL/code/R_code_export/IMPRV.r and the files beginning f_ and h_ in https://github.com/mine-cetinkaya-rundel/irt-eth/tree/master/MDT2018_FINAL/code
+```{r eval=FALSE, include=FALSE}
+
+## ----- Section 4.5 Concurrent -----
+mdt_cp <- as.data.frame(ltm::testEquatingData(list(mdt_clean[1:20], mdt17_clean[1:20])))
+
+catg_cp <- lapply(mdt_cp, function (x) {sort(unique(x))})
+mats_cp <- sapply(catg_cp, function (x) {
+  as.matrix(round(x * multi))
+})
+pal_cp <- palette()[c(1,3,5,6,7,9,10,13:20,2,4,8,11,12,21:25)]
+
+fit_17_cp <- suppressMessages(mirt(round(as.matrix(mdt_cp)*multi), 1, itemtyp="gpcm", gpcm_mats = mats_cp))
+
+myggplot.mirt.cp <- function (x, multi = 1, zrange = c(-5, 5), z = seq(zrange[1], zrange[2], length = 201), coefs=NULL, find.avg = FALSE, labels = NULL, legend = FALSE, xlab="Ability", cx = "top", cy = NULL, ncol = 1, bty = "n", col = palette(), lty = 1, pch, lwd = 1, cex = par("cex"), ...) {
+    nitems <- extract.mirt(x, 'nitems')
+    z0 <- which(z==0)
+    
+    y1 <- myexpected.mirt(x, zrange, coefs=coefs)/multi
+    y2 <- myinfo.mirt(x, zrange, coefs=coefs)
+    
+    irf.df <- data.frame(z, y1)
+    iif.df <- data.frame(z, y2)
+        
+    irf.df <- melt(irf.df, 'z')
+    iif.df <- melt(iif.df, 'z')
+    
+    trf.df <- data.frame(z, old=rowSums(y1[,c(1:20)]), new=rowSums(y1[,c(1:15,21:25)]))
+    tif.df <- data.frame(z, old=rowSums(y2[,c(1:20)]), new=rowSums(y2[,c(1:15,21:25)]))
+    
+    trf.df <- melt(trf.df, 'z')
+    tif.df <- melt(tif.df, 'z')
+
+    p1 <- ggplot(irf.df, aes(z, value, col=variable)) + 
+            geom_line(size=0.75) + 
+            scale_color_manual(values=col, name='') +
+            coord_cartesian(ylim=c(0,5), xlim=c(-4,4)) +
+            labs(title='Item Response Curves', x='Ability', y='Expected Score')
+    p2 <- ggplot(trf.df, aes(z, value, col=variable)) + 
+            geom_line(size=0.75) +
+            geom_point(data=subset(trf.df, z==0), aes(z, value, col=variable)) + 
+#             geom_segment(aes(x=0, y=sums[z0], xend=0, yend=-5), size=0.25, linetype=3) +
+#             geom_segment(aes(x=0, y=sums[z0], xend=-5, yend=sums[z0]), size=0.25, linetype=3) + 
+            geom_label_repel(data=subset(trf.df, z==0), label=paste0('(',0,',',round(subset(trf.df, z==0)$value,2),')'), hjust=-0.25, vjust=1, show.legend=F) + 
+            coord_cartesian(ylim=c(0,100), xlim=c(-4,4)) +
+            labs(title='Test Response Curve', x='Ability', y='Expected Total Score', col='MDT') + 
+            geom_label(aes(3.3, 19, label='MDT2', col=factor('old'))) + 
+            geom_label(aes(3.3, 5, label='MDT3', col=factor('new')))
+    p3 <- ggplot(iif.df, aes(z, value, col=variable)) +
+            geom_line(size=0.75) +
+            scale_color_manual(values=col) + 
+            scale_y_continuous(limits=c(0, NA)) +
+            coord_cartesian(xlim=c(-4,4)) +
+            labs(title='Item Information Curves', x='Ability', y='Information')
+    p4 <- ggplot(tif.df, aes(z, value, col=variable)) +
+            geom_line(size=0.75) + 
+            scale_y_continuous(limits=c(0, NA)) +
+            coord_cartesian(xlim=c(-4,4)) +
+            labs(title='Test Information Curve', x='Ability', y='Information', col='MDT') + 
+            geom_label(aes(3.3, 6.5, label='MDT2', col=factor('old'))) + 
+            geom_label(aes(3.3, 5.5, label='MDT3', col=factor('new')))
+
+    ggarrange(p1, p2, p3, p4, ncol=2, nrow=2, common.legend=T, legend='bottom', align='v')
+}
+
+options(repr.plot.width  = 6, repr.plot.height = 6)
+# pdf('../fig/IMPRV_17_CP.pdf', width=7, onefile=F)
+myggplot.mirt.cp(fit_17_cp, multi, col=pal_cp)
+# dev.off()
+options(repr.plot.width  = 4, repr.plot.height = 3)
+
+z <- seq(-5,5,length=201)
+
+y1 <- myinfo.mirt(fit_17_cp)[,16:20]
+y2 <- myinfo.mirt(fit_17_cp)[,21:25]
+oldtest_iif <- data.frame(z, y1)
+newtest_iif <- data.frame(z, y2)
+oldtest_iif <- melt(oldtest_iif, 'z')
+newtest_iif <- melt(newtest_iif, 'z')
+cp_iif <- rbind(newtest_iif, oldtest_iif)
+
+y3 <- myexpected.mirt(fit_17_cp)[,16:20]/multi
+y4 <- myexpected.mirt(fit_17_cp)[,21:25]/multi
+oldtest_irf <- data.frame(z, y3)
+newtest_irf <- data.frame(z, y4)
+oldtest_irf <- melt(oldtest_irf, 'z')
+newtest_irf <- melt(newtest_irf, 'z')
+cp_irf <- rbind(newtest_irf, oldtest_irf)
+
+options(repr.plot.width  = 6, repr.plot.height = 3)
+# pdf('../fig/IMPRV_CP_cf.pdf', width=7, height=4, onefile=F)
+p1 <- ggplot(cp_irf, aes(z, value, col=variable)) + 
+    geom_line(aes(lty=variable), size=0.75) + 
+    scale_colour_manual(name='', values=pal_cf) + 
+    scale_linetype_manual(name='', values=rep(c(1,2),each=5)) + 
+    coord_cartesian(xlim=c(-4,4), ylim=c(0,5)) +
+    labs(title='Item Response Curves', x='Ability', y='Expected Score')
+p2 <- ggplot(cp_iif, aes(z, value, col=variable)) + 
+    geom_line(aes(lty=variable), size=0.75) + 
+    scale_colour_manual(name='', values=pal_cf) + 
+    scale_linetype_manual(name='', values=rep(c(1,2),each=5)) + 
+    coord_cartesian(xlim=c(-4,4)) +
+    labs(title='Item Information Curves', x='Ability', y='Information')
+ggarrange(p1, p2, common.legend = T, legend='bottom')
+# dev.off()
+options(repr.plot.width  = 4, repr.plot.height = 3)
+
+# LaTeX: tab:IMPRV_CP_info
+info_cp <- rbind.fill(lapply(1:25, function (x) {
+    myareainfo.mirt(fit_17_cp, zrange=c(-2,2), which.items=x)[c('Info', 'TotalInfo')]
+}))
+group_17_cp <- rbind(group_pre17[-c(2,4,8,11,12),], group_pre17[c(2,4,8,11,12),], group_17[c(3,7,10,11,12),])
+info_fcip_major <- data.frame(group_17_cp, 
+                              MajorInfo=info_cp$Info, 
+                              Prop=prop.table(info_cp$Info)*100)
+info_fcip_total <- data.frame(group_17_cp, 
+                              TotalInfo=info_cp$TotalInfo, 
+                              Prop=prop.table(info_cp$TotalInfo)*100)
+print(xtable(arrange(info_fcip_major, Prop)), include.rownames=F)
+print(xtable(arrange(info_fcip_total, Prop)), include.rownames=F)
+
+eap.df <- as.data.frame(fscores(fit_17_cp, method='EAP', full.scores.SE=T))
+eap.df$Test <- rep(c('MDT2', 'MDT3'), c(nrow(mdt_clean), nrow(mdt17_clean)))
+# eap.df$Test <- factor(eap.df$Year, levels=c('MDT2', 'MDT3')) # reorder factors
+# pdf("../fig/IMPRV_CP_eap.pdf", width=7, height=4)
+ggplot(eap.df, aes(F1, colour=Test, fill=Test)) + 
+    geom_density(alpha=0.5) + 
+    scale_x_continuous(limits=c(-3.5,3.5)) +
+    labs(title="Density plot", 
+         subtitle="Ability grouped by test taken", 
+         x="Ability")
+# dev.off()
+
+eap.dsc <- rbind(describe(eap.df[eap.df$Test=='MDT2',]$F1), 
+                 describe(eap.df[eap.df$Test=='MDT3',]$F1))[,c(2,3,4,8,9,11,12)]
+rownames(eap.dsc) <- c('MDT2', 'MDT3')
+print(xtable(eap.dsc, digits=c(0,0,2,2,2,2,2,2)))
+
+```
+
+### (B) Simon's approach
+Massaging the mark categories for mirt - but there seems to be an error here, and I don't really understand the function.
+```{r}
+# This function written by Simon Taylor for his contribution to the IRT Working Group
+# NB - this issue seems related: https://github.com/philchalmers/mirt/issues/163 (and the relevel_items gives a more tidyverse way of re-levelling, though it doesn't retain knowledge of the correspondence between old and new scores)
+my_recategorise <- function(data, MAX_MARKS = NULL){
+  MARK_CATEGORIES <- lapply(apply(data, 2, unique), sort)
+  MAX <- unlist(lapply(MARK_CATEGORIES,max))
+  if(is.null(MAX_MARKS)){
+    MAX_MARKS <- MAX
+  }else{
+    if(any(MAX_MARKS < MAX)) 
+      stop("There is a mark that is greater than the specified max.")
+  }
+  data_recat <- data
+  for(item in 1:ncol(data)){
+    for(subj in 1:nrow(data)){
+      if(is.na(data[subj,item])) {
+        data_recat[subj,item] <- NA
+      } else {
+        data_recat[subj,item] <- which(MARK_CATEGORIES[[item]] %in% data[subj,item])
+      }
+    }
+  }
+  return(list(data_recat = data_recat, MARK_CATEGORIES = MARK_CATEGORIES, MAX_MARKS = MAX_MARKS))
+}
+
+item_data_relabelled <- my_recategorise(data = mdt_all_data, 
+                                        MAX_MARKS = rep(5, 20))
+head(item_data_relabelled$data_recat$Q1)
+item_data_relabelled$MARK_CATEGORIES$Q1
+head(mdt_all_data %>% drop_na %>% select(Q1))
+```
+
+### (C) Naive version
+Just put the (nonsense) data into mirt
+```{r}
+fit <- mirt(data = mdt_all_data %>% filter_all(any_vars(!is.na(.))), 
+            model = 1, itemtype = c("graded", "gpcmIRT")[2], 
+            SE = TRUE, verbose = FALSE)
+
+coef(fit, simplify = TRUE)  #Set simplify to FALSE to see conf. intervals
+print(fit)  ##Print fit measures to screen
+summary(fit)
+
+fit_thetas <- fscores(object = fit, method='EAP')
+plot(density(fit_thetas), main = "Thetas")
+```
+
+
+
+Ultimately the goal is to reproduce section 4.5 of the previous report, i.e.:
+
+1. plot of the item response curves (perhaps in interactive plotly form)
+2. plot of the item information curves (ditto)
+3. plot of test response and information curves, comparing test version A and B
+4. Comparison of added/removed questions, like Figure 4.13.
+5. A further plot comparing added/removed questions, showing the sum of the information curves of each type of question (i.e. two curves, one is "information in test A questions that were removed", the other is "information in test B questions that are new")
+6. A table like the right-hand side of table 4.9 showing the total information (area under the information curve) for each item.

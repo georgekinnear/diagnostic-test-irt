@@ -1,0 +1,533 @@
+---
+title: "Analysis of multiple-choice test (ETH Zurich)"
+author: "Mine Çetinkaya-Rundel, George Kinnear"
+date: '2021-04-21'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r load-packages, message=FALSE, include=FALSE}
+library(mirt)      # For IRT analysis
+library(psych)     # For factor analysis
+library(parameters)# For factor analysis
+library(tidyverse) # For data wrangling and visualisation
+library(reshape)   # For reshaping nested lists
+library(vroom)     # For reading in many files at once
+library(broom)     # For tidying model output
+library(fs)        # For file system operations
+library(gt)        # For formatting tables
+library(knitr)     # For markdown tables
+library(ggrepel)   # For labelling points without overlap
+library(skimr)     # For data frame level summary
+library(ggridges)  # For ridge plots
+library(plotly)    # For interactive plots
+```
+
+# 1. Data
+
+Information about the test:
+
+```{r load-test-info, echo=FALSE, message=FALSE}
+item_info <- read_csv("data-eth/eth-metadata.csv") %>% 
+  select(question = pre, description) %>% 
+  filter(!is.na(question))
+
+item_info %>%
+  gt()
+```
+
+Load the student scores for the test - here we load the 2017 and 2018 ETH Zurich test data:
+
+```{r load-all-data, echo=FALSE, message=FALSE}
+# produce list of all the relevant file names
+# (match only "all.csv" in the "-q36" versions of the test)
+files <- dir_ls("data-eth/", recurse = TRUE, regexp = "-q36/s21t-000.*.csv")
+
+# read all files and add a column called file_path to identify them
+eth_entry_test <- vroom(files, id = "file_path")
+
+# parse file_path column into year and class
+test_scores <- eth_entry_test %>%
+  mutate(
+    file_path = str_remove(file_path, "data-eth/"),
+    file_path = str_remove(file_path, "-q36"),
+    file_path = str_remove(file_path, ".csv"),
+    ) %>%
+  separate(file_path, c("year", "class"), sep = "/")
+```
+
+```{r data-peek}
+test_scores
+```
+
+## Missing data
+
+The data includes scores of `2` for the "I don't know" answer option. We replace these with `NA`:
+
+```{r}
+test_scores <- test_scores %>% 
+  mutate(across(starts_with("A"), ~ na_if(., 2))) %>%
+  # A few students gave "I don't know" as their answer to every question
+  # Here we remove them, since rows with all NAs cause problems for mirt
+  filter(!if_all(starts_with("A"), is.na))
+```
+
+## Data summary
+
+The number of responses from each class:
+
+```{r skim-classes}
+test_scores %>% 
+  group_by(year, class) %>% 
+  tally() %>% 
+  gt() %>% 
+  data_color(
+    columns = c("n"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  )
+```
+
+Mean and standard deviation for each item:
+
+```{r skim-all-data}
+test_scores %>% 
+  select(-class) %>% 
+  group_by(year) %>% 
+  skim_without_charts() %>% 
+  select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
+  group_by(year) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("numeric"), decimals = 3) %>%
+  data_color(
+    columns = c("numeric.mean"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  cols_label(
+    numeric.mean = "Mean",
+    numeric.sd = "SD"
+  )
+```
+
+# 2. Testing assumptions
+
+Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
+
+### Local independence
+
+> **TODO** Perhaps just remove this section? See the later section on local independence which is consistent with DeMars p.48
+
+This plot shows the correlations between scores on each pair of items:
+
+```{r corr-plot}
+item_scores <- test_scores %>% 
+  select(-class, -year)
+
+cor_ci <- psych::corCi(item_scores, plot = FALSE)
+
+psych::cor.plot.upperLowerCi(cor_ci)
+```
+
+There are a few correlations that are not significantly different from 0:
+
+```{r cor-not-corr}
+cor_ci$ci %>% 
+  as_tibble(rownames = "corr") %>% 
+  filter(p > 0.05) %>% 
+  arrange(-p) %>% 
+  select(-contains(".e")) %>% 
+  gt() %>% 
+  fmt_number(columns = 2:4, decimals = 3)
+```
+
+The overall picture is that the item scores are well correlated with each other.
+
+### Dimensionality
+
+```{r fa-checks}
+structure <- check_factorstructure(item_scores)
+n <- n_factors(item_scores)
+```
+
+```{r fa-structure-check, echo=FALSE, results="asis"}
+# check_factorstructure(item_scores)
+
+# HACK - to make the heading printed by easystats be h4 rather than h1, use ### 
+# TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
+
+res <- capture.output(structure)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors, echo=FALSE, results = "asis"}
+res <- capture.output(n)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors-details}
+plot(n)
+summary(n) %>% gt()
+#n %>% tibble() %>% gt()
+```
+
+
+```{r fa-scree}
+fa.parallel(item_scores, fa = "fa")
+```
+
+### 1 Factor
+
+We use the `factanal` function to fit a 1-factor model. Note that this function cannot handle missing data, so we set the `NA` scores to `0` for this analysis.
+
+```{r fa1}
+fitfact <- factanal(item_scores %>%
+                      mutate(across(everything(), ~ replace_na(.x, 0))),
+                    factors = 1,
+                    rotation = "varimax")
+print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load <- tidy(fitfact)
+
+ggplot(load, aes(x = fl1, y = 0)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(x = "Factor 1", y = NULL,
+       title = "Standardised Loadings", 
+       subtitle = "Based upon correlation matrix") +
+  theme_minimal()
+```
+
+```{r}
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(item_info, by = "question") %>% 
+  arrange(-factor_loading) %>% 
+  gt() %>%
+  data_color(
+    columns = contains("factor"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  )
+```
+
+> **TODO** Meike to offer some comments here about whether there is any apparent meaning in the factor
+
+```{r}
+# To proceed with the IRT analysis, comment out the following line before knitting
+#knitr::knit_exit()
+```
+
+
+# 3. Fitting 2 parameter logistic MIRT model
+
+We can fit a Multidimensional Item Response Theory (mirt) model. From the function definition:
+
+```
+mirt fits a maximum likelihood (or maximum a posteriori) factor analysis model to any mixture of dichotomous and polytomous data under the item response theory paradigm using either Cai's (2010) Metropolis-Hastings Robbins-Monro (MHRM) algorithm.
+```
+
+The process is to first fit the model, and save the result as a model object that we can then parse to get tabular or visual displays of the model that we might want. When fitting the model, we have the option to specify a few arguments, which then get interpreted as parameters to be passed to the model.
+
+```{r fit-mirt, warning=FALSE, message=FALSE}
+fit_2pl <- mirt(
+  data = item_scores, # just the columns with question scores
+  model = 1,          # number of factors to extract
+  itemtype = "2PL",   # 2 parameter logistic model
+  SE = TRUE           # estimate standard errors
+  )
+```
+
+## Local independence
+
+We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+residuals_2pl <- residuals(fit_2pl, type = "Q3") %>% data.frame
+```
+```{r}
+residuals_2pl  %>% as.matrix() %>% 
+  corrplot::corrplot(type = "upper")
+```
+
+This shows that most item pairs are independent, with only one pair showing cause for concern:
+
+```{r}
+residuals_2pl %>%
+  rownames_to_column(var = "q1") %>%
+  as_tibble() %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  filter(abs(Q3_score) > 0.2) %>% 
+  filter(parse_number(q1) < parse_number(q2)) %>%
+  gt()
+```
+
+Items A18 and A19 are on the product and quotient rules.
+
+Given that this violation of the local independence assumption is very mild, we proceed using this model.
+
+## Model parameters
+
+We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
+
+```{r augment-with-f1}
+test_scores <- test_scores %>%
+  mutate(F1 = fscores(fit_2pl, method = "EAP"))
+```
+
+We can also calculate the model coefficient estimates using a generic function `coef()` which is used to extract model coefficients from objects returned by modeling functions. We will set the `IRTpars` argument to `TRUE`, which means slope intercept parameters will be converted into traditional IRT parameters.
+
+```{r extract-coefs}
+coefs_2pl <- coef(fit_2pl, IRTpars = TRUE)
+```
+
+The resulting object `coefs` is a list, with one element for each question, and an additional `GroupPars` element that we won't be using. The output is a bit long, so we're only showing a few of the elements here:
+
+```{r peek-coefs}
+coefs_2pl[1:3]
+# coefs_2pl[35:37]
+```
+
+Let's take a closer look at the first element:
+
+```{r coef-1}
+coefs_2pl[1]
+```
+
+In this output:
+
+* `a` is discrimination
+* `b` is difficulty
+* endpoints of the 95% confidence intervals are also shown
+
+To make this output a little more user friendly, we should tidy it such that we have a row per question. We'll do this in two steps. First, write a function that tidies the output for one question, i.e. one list element. Then, map this function over the list of all questions, resulting in a data frame.
+
+```{r f-tidy-mirt-coefs}
+tidy_mirt_coefs <- function(x){
+  x %>%
+    # melt the list element
+    melt() %>%
+    # convert to a tibble
+    as_tibble() %>%
+    # convert factors to characters
+    mutate(across(where(is.factor), as.character)) %>%
+    # only focus on rows where X2 is a or b (discrimination or difficulty)
+    filter(X2 %in% c("a", "b")) %>%
+    # in X1, relabel par (parameter) as est (estimate)
+    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
+    # unite columns X2 and X1 into a new column called var separated by _
+    unite(X2, X1, col = "var", sep = "_") %>%
+    # turn into a wider data frame
+    pivot_wider(names_from = var, values_from = value)
+}
+```
+
+Let's see what this does to a single element in `coefs`:
+
+```{r apply-once-tidy-mirt-coefs}
+tidy_mirt_coefs(coefs_2pl[1])
+```
+
+And now let's map it over all 32 elements of coefs:
+
+```{r map-tidy-mirt-coefs}
+tidy_2pl <- map_dfr(coefs_2pl[1:32], tidy_mirt_coefs, .id = "Question")
+```
+
+A quick peek at the result:
+
+```{r peek-tidy-output}
+tidy_2pl
+```
+
+And a nicely formatted table of the result:
+
+```{r tabulate-tidy-output, eval=FALSE}
+gt(tidy_2pl) %>%
+  fmt_number(columns = contains("_"), decimals = 3) %>%
+  data_color(
+    columns = contains("a_"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("b_"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  ) %>%
+  tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
+  tab_spanner(label = "Difficulty", columns = contains("b_")) %>%
+  cols_label(
+    a_est = "Est.",
+    b_est = "Est.",
+    a_CI_2.5 = "2.5%",
+    b_CI_2.5 = "2.5%",
+    a_CI_97.5 = "97.5%",
+    b_CI_97.5 = "97.5%"
+  )
+```
+
+```{r}
+tidy_2pl %>% 
+  mutate(qnum = parse_number(Question)) %>% 
+  ggplot(aes(
+    x = a_est,
+    y = b_est
+  )) +
+  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0, alpha = 0.5) +
+  geom_errorbar(aes(xmin = a_CI_2.5, xmax = a_CI_97.5), width = 0, alpha = 0.5) +
+  geom_text_repel(aes(label = Question), alpha = 0.5) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Discrimination",
+       y = "Difficulty")
+```
+
+```{r save-2pl-results}
+tidy_2pl %>% 
+  write_csv("data-eth/OUT_2pl-results-pre-only.csv")
+```
+
+## Comparing years and classes
+
+Do students from different programmes of study have different distributions of ability?
+
+### Differences between years
+
+Compare the distribution of abilities in the year groups (though in this case there is only one).
+
+```{r viz-years}
+ggplot(test_scores, aes(F1, fill = as.factor(year), colour = as.factor(year))) +
+  geom_density(alpha=0.5) + 
+  scale_x_continuous(limits = c(-3.5,3.5)) +
+  labs(title = "Density plot", 
+       subtitle = "Ability grouped by year of taking the test", 
+       x = "Ability", y = "Density",
+       fill = "Year", colour = "Year") +
+  theme_minimal()
+```
+
+### Differences between classes
+
+Compare the distribution of abilities in the various classes.
+
+```{r viz-classes}
+ggplot(test_scores, aes(x = F1, y = class, colour = class, fill = class)) +
+  geom_density_ridges(alpha = 0.5) + 
+  scale_x_continuous(limits = c(-3.5,3.5)) +
+  guides(fill = FALSE, colour = FALSE) +
+  labs(title = "Density plot", 
+       subtitle = "Ability grouped by class of taking the test", 
+       x = "Ability", y = "Class") +
+  theme_minimal()
+```
+
+## Information curves
+
+### Test information curve
+
+```{r}
+plot(fit_2pl, type = "infoSE", main = "Test information")
+```
+
+### Item information curves
+
+```{r}
+plot(fit_2pl, type = "infotrace", main = "Item information curves")
+```
+
+## Response curves
+
+### Test response curves
+
+```{r}
+plot(fit_2pl, type = "score", auto.key = FALSE)
+```
+
+### Item response curves
+
+We can get individual item surface and information plots using the `itemplot()` function from the **mirt** package, e.g.
+
+```{r}
+mirt::itemplot(fit_2pl, item = 1, 
+               main = "Trace lines for item 1")
+```
+
+We can also get the plots for all trace lines, one facet per plot.
+
+```{r}
+plot(fit_2pl, type = "trace", auto.key = FALSE)
+```
+
+Or all of them overlaid in one plot.
+
+```{r}
+plot(fit_2pl, type = "trace", facet_items=FALSE)
+```
+
+An alternative approach is using ggplot2 and plotly to add interactivity to make it easier to identify items.
+
+```{r warning=FALSE}
+# store the object
+plt <- plot(fit_2pl, type = "trace", facet_items = FALSE)
+# the data we need is in panel.args
+# TODO - I had to change the [[1]] to [[2]] since the plt has two panels for some reason, with the one we want being the 2nd panel
+plt_data <- tibble(
+  x          = plt$panel.args[[2]]$x,
+  y          = plt$panel.args[[2]]$y,
+  subscripts = plt$panel.args[[2]]$subscripts,
+  item       = rep(colnames(item_scores), each = 200)
+) %>%
+  mutate(
+    item_no = str_remove(item, "A") %>% as.numeric(),
+    item    = fct_reorder(item, item_no)
+    )
+
+head(plt_data)
+
+plt_gg <- ggplot(plt_data, aes(x, y, 
+                          colour = item, 
+                          text = item)) + 
+  geom_line() + 
+  labs(
+    title = "2PL - Trace lines",
+    #x = expression(theta),
+    x = "theta",
+    #y = expression(P(theta)),
+    y = "P(theta)",
+    colour = "Item"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplotly(plt_gg, tooltip = "text")
+```
+
+
+```{r}
+knitr::knit_exit()
+```
+
+
+
+
+
+
+
+## Packages
+
+In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
+
+- [**mirt**](https://cran.r-project.org/web/packages/mirt/mirt.pdf): For IRT analysis
+- [**psych**](https://personality-project.org/r/psych/): For factor analysis
+- [**tidyverse**](https://tidyverse.org/): For data wrangling and visualisation
+- [**reshape**](http://had.co.nz/reshape/): For reshaping nested lists
+- [**vroom**](https://vroom.r-lib.org/): For reading in many files at once
+- [**broom**](https://broom.tidymodels.org/): For tidying model output
+- [**fs**](https://fs.r-lib.org/): For file system operations
+- [**gt**](https://gt.rstudio.com/): For formatting tables
+- [**knitr**](https://yihui.org/knitr/): For markdown tables
+- [**ggrepel**](https://ggrepel.slowkow.com/): For labelling points without overlap
+- [**skimr**](https://docs.ropensci.org/skimr/): For data frame level summary
+- [**ggridges**](https://wilkelab.org/ggridges/): For ridge plots
+
+
