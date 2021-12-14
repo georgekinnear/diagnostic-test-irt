@@ -6,6 +6,7 @@ output:
   html_document:
     toc: yes
     toc_float: yes
+    code_folding: hide
 editor_options:
   chunk_output_type: console
 ---
@@ -66,14 +67,11 @@ test_scores
 
 ## Missing data
 
-The data includes scores of `2` for the "I don't know" answer option. We replace these with `NA`:
+The data includes scores of `2` for the "I don't know" answer option. We replace these with 0, reflecting a non-correct answer:
 
 ```{r}
 test_scores <- test_scores %>% 
-  mutate(across(starts_with("A"), ~ na_if(., 2))) %>%
-  # A few students gave "I don't know" as their answer to every question
-  # Here we remove them, since rows with all NAs cause problems for mirt
-  filter(!if_all(starts_with("A"), is.na))
+  mutate(across(starts_with("A"), ~ ifelse(. == 2, 0, .)))
 ```
 
 ## Data summary
@@ -116,9 +114,9 @@ test_scores %>%
 
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
 
-### Local independence
+### Inter-item correlations
 
-> **TODO** Perhaps just remove this section? See the later section on local independence which is consistent with DeMars p.48
+If the test is unidimensional then we would expect student scores on pairs of items to be correlated.
 
 This plot shows the correlations between scores on each pair of items:
 
@@ -180,11 +178,12 @@ fa.parallel(item_scores, fa = "fa")
 
 ### 1 Factor
 
-We use the `factanal` function to fit a 1-factor model. Note that this function cannot handle missing data, so we set the `NA` scores to `0` for this analysis.
+We use the `factanal` function to fit a 1-factor model.
+
+_Note that this function cannot handle missing data, so any `NA` scores must be set to `0` for this analysis._
 
 ```{r fa1}
-fitfact <- factanal(item_scores %>%
-                      mutate(across(everything(), ~ replace_na(.x, 0))),
+fitfact <- factanal(item_scores,
                     factors = 1,
                     rotation = "varimax")
 print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
@@ -214,11 +213,64 @@ load %>%
 
 > **TODO** Meike to offer some comments here about whether there is any apparent meaning in the factor
 
-```{r}
-# To proceed with the IRT analysis, comment out the following line before knitting
-#knitr::knit_exit()
+
+### 6 Factor
+
+Here we also investigate the 6-factor solution, to see whether these factors are interpretable.
+
+```{r fa4}
+fitfact6 <- factanal(item_scores, factors = 6, rotation = "varimax")
+print(fitfact6, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load6 <- tidy(fitfact6)
+
+ggplot(load6, aes(x = fl1, y = fl2)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(x = "Factor 1", y = "Factor 2",
+       title = "Standardised Loadings", 
+       subtitle = "Based upon correlation matrix") +
+  theme_minimal()
 ```
 
+```{r}
+main_factors <- load6 %>% 
+#  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
+  pivot_longer(names_to = "factor",
+               cols = contains("fl")) %>% 
+  mutate(value_abs = abs(value)) %>% 
+  group_by(variable) %>% 
+  top_n(1, value_abs) %>% 
+  ungroup() %>% 
+  transmute(main_factor = factor, variable)
+
+library(kableExtra)
+load6 %>% 
+  select(-uniqueness) %>% 
+  # add the info about which is the main factor
+  left_join(main_factors) %>%
+  left_join(item_info %>% select(variable = question, description)) %>% 
+  arrange(main_factor) %>% 
+  select(main_factor, everything()) %>% 
+  # arrange adjectives by descending loading on main factor
+  rowwise() %>% 
+  mutate(max_loading = max(abs(c_across(starts_with("fl"))))) %>% 
+  group_by(main_factor) %>% 
+  arrange(-max_loading, .by_group = TRUE) %>% 
+  select(-max_loading) %>% 
+  # sort out the presentation
+  rename("Main Factor" = main_factor, # the _ throws a latex error
+         "Question" = variable) %>%
+  mutate_at(
+    vars(starts_with("fl")),
+    ~ cell_spec(round(., digits = 3), bold = if_else(abs(.) > 0.4, T, F))
+  ) %>% 
+  kable(booktabs = T, escape = F, longtable = T) %>% 
+  kableExtra::collapse_rows(columns = 1, valign = "top") %>%
+  kableExtra::kable_styling(latex_options = c("repeat_header"))
+```
+
+> **TODO** Meike to comment
 
 # 3. Fitting 2 parameter logistic MIRT model
 
@@ -343,7 +395,7 @@ tidy_2pl
 
 And a nicely formatted table of the result:
 
-```{r tabulate-tidy-output, eval=FALSE}
+```{r tabulate-tidy-output}
 gt(tidy_2pl) %>%
   fmt_number(columns = contains("_"), decimals = 3) %>%
   data_color(
