@@ -324,7 +324,7 @@ Given that this violation of the local independence assumption is very mild, we 
 We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
 
 ```{r augment-with-f1}
-test_scores <- test_scores %>%
+test_scores_with_2pl_ability <- test_scores %>%
   mutate(F1 = fscores(fit_2pl, method = "EAP"))
 ```
 
@@ -364,8 +364,8 @@ tidy_mirt_coefs <- function(x){
     as_tibble() %>%
     # convert factors to characters
     mutate(across(where(is.factor), as.character)) %>%
-    # only focus on rows where X2 is a or b (discrimination or difficulty)
-    filter(X2 %in% c("a", "b")) %>%
+    # only focus on rows where X2 is a or b (discrimination or difficulty), or g (guessing parameter in 3PL)
+    filter(X2 %in% c("a", "b", "g")) %>%
     # in X1, relabel par (parameter) as est (estimate)
     mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
     # unite columns X2 and X1 into a new column called var separated by _
@@ -384,7 +384,8 @@ tidy_mirt_coefs(coefs_2pl[1])
 And now let's map it over all 32 elements of coefs:
 
 ```{r map-tidy-mirt-coefs}
-tidy_2pl <- map_dfr(coefs_2pl[1:32], tidy_mirt_coefs, .id = "Question")
+# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
+tidy_2pl <- map_dfr(head(coefs_2pl, -1), tidy_mirt_coefs, .id = "Question")
 ```
 
 A quick peek at the result:
@@ -448,7 +449,7 @@ Do students from different programmes of study have different distributions of a
 Compare the distribution of abilities in the year groups (though in this case there is only one).
 
 ```{r viz-years}
-ggplot(test_scores, aes(F1, fill = as.factor(year), colour = as.factor(year))) +
+ggplot(test_scores_with_2pl_ability, aes(F1, fill = as.factor(year), colour = as.factor(year))) +
   geom_density(alpha=0.5) + 
   scale_x_continuous(limits = c(-3.5,3.5)) +
   labs(title = "Density plot", 
@@ -463,7 +464,7 @@ ggplot(test_scores, aes(F1, fill = as.factor(year), colour = as.factor(year))) +
 Compare the distribution of abilities in the various classes.
 
 ```{r viz-classes}
-ggplot(test_scores, aes(x = F1, y = class, colour = class, fill = class)) +
+ggplot(test_scores_with_2pl_ability, aes(x = F1, y = class, colour = class, fill = class)) +
   geom_density_ridges(alpha = 0.5) + 
   scale_x_continuous(limits = c(-3.5,3.5)) +
   guides(fill = FALSE, colour = FALSE) +
@@ -555,14 +556,122 @@ ggplotly(plt_gg, tooltip = "text")
 ```
 
 
-```{r}
-knitr::knit_exit()
+# 4. Checking 3PL
+
+The 3 parameter IRT model adds a third "guessing" parameter for each item, which gives the lower asymptote of the response curve.
+
+Given that the test offered an "I don't know" option (which we have mapped to a score of 0), we would expect that students are less likely to be guessing when answering these multiple-choice questions. So, we would expect to see the lower aymptotes being closer to 0 than would ordinarily be expected for a 4- or 5-option MCQ.
+
+
+```{r fit-mirt-3pl, warning=FALSE, message=FALSE, results='hide'}
+fit_3pl <- mirt(
+  data = item_scores, # just the columns with question scores
+  model = 1,          # number of factors to extract
+  itemtype = "3PL",   # 3 parameter logistic model
+  SE = TRUE           # estimate standard errors
+  )
+
+residuals_3pl <- residuals(fit_3pl, type = "Q3") %>% data.frame
+
+coefs_3pl <- coef(fit_3pl, IRTpars = TRUE)
+
+test_scores_with_3pl_ability <- test_scores %>%
+  mutate(F1 = fscores(fit_3pl, method = "EAP"))
 ```
 
+## Local independence
 
+We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
 
+```{r}
+residuals_3pl  %>% as.matrix() %>% 
+  corrplot::corrplot(type = "upper")
+```
 
+This shows that most item pairs are independent, with only a couple of pairs showing cause for concern:
 
+```{r}
+residuals_3pl %>%
+  rownames_to_column(var = "q1") %>%
+  as_tibble() %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  filter(abs(Q3_score) > 0.2) %>% 
+  filter(parse_number(q1) < parse_number(q2)) %>%
+  gt()
+```
+
+* Items A18 and A19 are on the product and quotient rules.
+
+* Items A34 and A35 are **TODO - comment on these**
+
+Given that this violation of the local independence assumption is very mild, we proceed using this model.
+
+## Model parameters
+
+```{r map-tidy-mirt-coefs-3pl}
+tidy_3pl <- map_dfr(head(coefs_3pl, -1), tidy_mirt_coefs, .id = "Question")
+```
+
+A quick peek at the result:
+
+```{r peek-tidy-output-3pl}
+tidy_3pl
+```
+
+And a nicely formatted table of the result:
+
+```{r tabulate-tidy-output-3pl}
+gt(tidy_3pl) %>%
+  fmt_number(columns = contains("_"), decimals = 3) %>%
+  data_color(
+    columns = contains("a_"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("b_"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("g_"),
+    colors = scales::col_numeric(palette = c("Reds"), domain = NULL)
+  ) %>%
+  tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
+  tab_spanner(label = "Difficulty", columns = contains("b_")) %>%
+  tab_spanner(label = "Guessing", columns = contains("g_")) %>%
+  cols_label(
+    a_est = "Est.",
+    b_est = "Est.",
+    g_est = "Est.",
+    a_CI_2.5 = "2.5%",
+    b_CI_2.5 = "2.5%",
+    g_CI_2.5 = "2.5%",
+    a_CI_97.5 = "97.5%",
+    b_CI_97.5 = "97.5%",
+    g_CI_97.5 = "97.5%"
+  )
+```
+
+```{r plot-tidy-3pl}
+tidy_3pl %>% 
+  mutate(qnum = parse_number(Question)) %>% 
+  ggplot(aes(
+    x = qnum,
+    y = g_est
+  )) +
+  geom_errorbar(aes(ymin = g_CI_2.5, ymax = g_CI_97.5), width = 0, alpha = 0.5) +
+  geom_text_repel(aes(label = Question), alpha = 0.5) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "Question",
+       y = "Guessing parameter")
+```
+
+```{r save-3pl-results}
+tidy_3pl %>% 
+  write_csv("data-eth/OUT_3pl-results-pre-only.csv")
+```
+
+> **TODO** some comment on the 3PL results - i.e. looks like guessing is indeed rare, but perhaps happening a bit in some questions (any ideas why?)
 
 
 ## Packages
