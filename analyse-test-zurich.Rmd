@@ -600,9 +600,9 @@ residuals_3pl %>%
   gt()
 ```
 
-* Items A18 and A19 are on the product and quotient rules.
+* Items A18 and A19 are on the product and quotient rules, with an identical structure in each case (giving all the values that need to be used in the relevant formula).
 
-* Items A34 and A35 are **TODO - comment on these**
+* Items A34 and A35 are are both about planes in vector geometry.
 
 Given that this violation of the local independence assumption is very mild, we proceed using this model.
 
