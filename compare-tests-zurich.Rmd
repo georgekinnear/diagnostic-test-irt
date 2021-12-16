@@ -662,12 +662,136 @@ ggplotly(plt_gg, tooltip = "text")
 ```
 
 
+
+# 4. Factor analysis for the new test only
+
+Here we redo the factor analysis, but using only the data from the new version of the test
+
 ```{r}
-knitr::knit_exit()
+item_scores_B <- test_scores %>% 
+  select(-F1) %>% 
+  select(-contains("B0")) %>% 
+  filter(test_version == "post") %>% 
+  select(-class, -year, -test_version)
 ```
 
 
+```{r fa-checks-B}
+structure <- check_factorstructure(item_scores_B)
+n <- n_factors(item_scores_B)
+```
 
+```{r fa-structure-check-B, echo=FALSE, results="asis"}
+# check_factorstructure(item_scores)
+
+# HACK - to make the heading printed by easystats be h4 rather than h1, use ### 
+# TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
+
+res <- capture.output(structure)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors-B, echo=FALSE, results = "asis"}
+res <- capture.output(n)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors-details-B}
+plot(n)
+summary(n) %>% gt()
+#n %>% tibble() %>% gt()
+```
+
+
+```{r fa-scree-B}
+fa.parallel(item_scores_B, fa = "fa")
+```
+
+### 1 Factor
+
+```{r fa1-B}
+fitfact <- factanal(item_scores_B, factors = 1, rotation = "varimax")
+print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load <- tidy(fitfact)
+
+ggplot(load, aes(x = fl1, y = 0)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(x = "Factor 1", y = NULL,
+       title = "Standardised Loadings", 
+       subtitle = "Based upon correlation matrix") +
+  theme_minimal()
+```
+
+```{r}
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(test_versions %>% select(question = label, description), by = "question") %>% 
+  arrange(-factor_loading) %>% 
+  gt() %>%
+  data_color(
+    columns = contains("factor"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  )
+```
+
+
+### 4 Factor
+
+Here we also investigate the 4-factor solution, to see whether these factors are interpretable.
+
+```{r fa4-B}
+fitfact4 <- factanal(item_scores_B, factors = 4, rotation = "varimax")
+print(fitfact4, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load4 <- tidy(fitfact4)
+
+ggplot(load4, aes(x = fl1, y = fl2)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(x = "Factor 1", y = "Factor 2",
+       title = "Standardised Loadings", 
+       subtitle = "Based upon correlation matrix") +
+  theme_minimal()
+```
+
+```{r}
+main_factors <- load4 %>% 
+#  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
+  pivot_longer(names_to = "factor",
+               cols = contains("fl")) %>% 
+  mutate(value_abs = abs(value)) %>% 
+  group_by(variable) %>% 
+  top_n(1, value_abs) %>% 
+  ungroup() %>% 
+  transmute(main_factor = factor, variable)
+
+library(kableExtra)
+load4 %>% 
+  select(-uniqueness) %>% 
+  # add the info about which is the main factor
+  left_join(main_factors) %>%
+  left_join(test_versions %>% select(variable = label, description)) %>% 
+  arrange(main_factor) %>% 
+  select(main_factor, everything()) %>% 
+  # arrange adjectives by descending loading on main factor
+  rowwise() %>% 
+  mutate(max_loading = max(abs(c_across(starts_with("fl"))))) %>% 
+  group_by(main_factor) %>% 
+  arrange(-max_loading, .by_group = TRUE) %>% 
+  select(-max_loading) %>% 
+  # sort out the presentation
+  rename("Main Factor" = main_factor, # the _ throws a latex error
+         "Question" = variable) %>%
+  mutate_at(
+    vars(starts_with("fl")),
+    ~ cell_spec(round(., digits = 3), bold = if_else(abs(.) > 0.4, T, F))
+  ) %>% 
+  kable(booktabs = T, escape = F, longtable = T) %>% 
+  kableExtra::collapse_rows(columns = 1, valign = "top") %>%
+  kableExtra::kable_styling(latex_options = c("repeat_header"))
+```
 
 
 
