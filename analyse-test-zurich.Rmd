@@ -97,16 +97,28 @@ test_scores %>%
   group_by(year) %>% 
   skim_without_charts() %>% 
   select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
-  group_by(year) %>% 
-  gt() %>% 
-  fmt_number(columns = contains("numeric"), decimals = 3) %>%
-  data_color(
-    columns = c("numeric.mean"),
-    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
-  ) %>%
+  rename(complete = complete_rate) %>% 
+  # make the table wider, i.e. with separate columns for each year's results, with the year at the start of each column name
+  pivot_wider(names_from = year, values_from = -c(skim_variable, year), names_glue = "{year}__{.value}") %>% 
+  # put the columns in order by year
+  select(sort(names(.))) %>% 
+  select(skim_variable, everything()) %>% 
+  # use GT to make the table look nice
+  gt(rowname_col = "skim_variable") %>% 
+  # group the columns from each year
+  tab_spanner_delim(delim = "__") %>%
+  fmt_number(columns = contains("numeric"), decimals = 2) %>%
+  fmt_percent(columns = contains("complete"), decimals = 0) %>% 
+  # change all the numeric.mean and numeric.sd column names to Mean and SD
   cols_label(
-    numeric.mean = "Mean",
-    numeric.sd = "SD"
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.mean"), label = "Mean") %>% deframe()
+  ) %>% 
+  cols_label(
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.sd"), label = "SD") %>% deframe()
+  ) %>%
+  data_color(
+    columns = contains("numeric.mean"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
   )
 ```
 
