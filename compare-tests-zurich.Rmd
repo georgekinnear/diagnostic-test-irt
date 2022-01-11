@@ -123,19 +123,12 @@ The scores are:
 test_scores
 ```
 
-For this analysis, we replace the "2 = I don't know" scores with NA, so that they will be treated as missing data.
+For this analysis, we replace the "2 = I don't know" scores with 0, reflecting a non-correct answer.
 
 ```{r}
 test_scores <- test_scores %>% 
-  mutate(across(starts_with("A"), ~ na_if(., 2))) %>%
-  # A few students (23 out of 9671) gave "I don't know" as their answer to every question
-  # Here we remove them, since rows with all NAs cause problems for mirt
-  filter(!if_all(starts_with("A"), is.na))
+  mutate(across(starts_with("A"), ~ ifelse(. == 2, 0, .)))
 ```
-
-**TODO** - consider mapping this to 0 instead, as it reflects being "not correct"
-
-**TODO** - also try fitting a 3PL model to see if the "don't know" responses reduce the guessing parameter
 
 ## Data summary
 
