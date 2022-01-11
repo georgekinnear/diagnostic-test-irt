@@ -182,6 +182,12 @@ test_scores %>%
 
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
 
+Since the combined data on the two versions of the test have large portions of "missing" data (e.g. no responses to new questions from students who completed the old test), it is not possible to carry out the factor analysis as in the analyse-test script, since the factor analysis routine does not work with missing data.
+
+Instead, in the next section we proceed directly to fitting the IRT model, and using the $Q_3$ check for local independence. In the final section, we also run a factor analysis for the data from the new test only.
+
+> **TODO** delete the rest of the contents of this section?!
+
 ### Local independence
 
 This plot shows the correlations between scores on each pair of items -- note that it is restricted to only those items that appear on both versions of the test, since the plotting package did not deal well with missing data:
@@ -299,22 +305,18 @@ load %>%
 ```
 
 
-```{r}
-# To proceed with the IRT analysis, comment out the following line before knitting
-#knitr::knit_exit()
-```
 
-### 4 Factor
+### 3 Factor
 
-Here we also investigate the 4-factor solution, to see whether these factors are interpretable.
+Here we also investigate the 3-factor solution, to see whether these factors are interpretable.
 
 ```{r fa4}
-fitfact4 <- factanal(item_scores_unchanged_only_and_no_na, factors = 4, rotation = "varimax")
-print(fitfact4, digits = 2, cutoff = 0.3, sort = TRUE)
+fitfact3 <- factanal(item_scores_unchanged_only_and_no_na, factors = 3, rotation = "varimax")
+print(fitfact3, digits = 2, cutoff = 0.3, sort = TRUE)
 
-load4 <- tidy(fitfact4)
+load3 <- tidy(fitfact3)
 
-ggplot(load4, aes(x = fl1, y = fl2)) + 
+ggplot(load3, aes(x = fl1, y = fl2)) + 
   geom_point() + 
   geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
   labs(x = "Factor 1", y = "Factor 2",
@@ -324,7 +326,7 @@ ggplot(load4, aes(x = fl1, y = fl2)) +
 ```
 
 ```{r}
-main_factors <- load4 %>% 
+main_factors <- load3 %>% 
 #  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
   pivot_longer(names_to = "factor",
                cols = contains("fl")) %>% 
@@ -335,7 +337,7 @@ main_factors <- load4 %>%
   transmute(main_factor = factor, variable)
 
 library(kableExtra)
-load4 %>% 
+load3 %>% 
   select(-uniqueness) %>% 
   # add the info about which is the main factor
   left_join(main_factors) %>%
@@ -391,7 +393,7 @@ residuals_2pl  %>% as.matrix() %>%
   corrplot::corrplot(type = "upper")
 ```
 
-This shows that most item pairs are independent, with only one pair showing cause for concern:
+This shows that most item pairs are independent, with only a couple of pairs showing cause for concern:
 
 ```{r}
 residuals_2pl %>%
@@ -403,9 +405,13 @@ residuals_2pl %>%
   gt()
 ```
 
-Items A18 and A19 are on the product and quotient rules.
+In fact, both of these pairs highlight questions that were removed from the test:
 
-Given that this violation of the local independence assumption is very mild (particularly as A19 is one of the questions removed from the test), we proceed using this model.
+* A18 and A19 are on the product and quotient rules, and only A18 was retained on the new test,
+
+* A34 and A35 are both about vectors; only A34 was retained (in modified form, as B30)
+
+Given that this violation of the local independence assumption is very mild, we proceed using this model.
 
 ## Model parameters
 We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
@@ -729,6 +735,9 @@ load %>%
   )
 ```
 
+The questions that load most strongly on this factor are very standard calculations in integration, differentiation, and trigonometry -- which is consistent with the aim of the test.
+
+> **TODO** - disappointing that the new questions are all at the low end of this table?
 
 ### 4 Factor
 
@@ -786,7 +795,17 @@ load4 %>%
   kableExtra::kable_styling(latex_options = c("repeat_header"))
 ```
 
+**TODO** add comments from Meike here
 
+> The first factor is again calculations, but this time only in calculus (i.e. integrals and derivatives).
+> 
+> The second factor seems to be something like "abstract stuff", it has to do with limits, rules for logarithms etc.
+> 
+> I guess that could be a category of its own.
+> 
+> The third one is interesting. It's clearly graphical interpretations. All in different settings, but clearly belonging together.
+> 
+> And of the fourth factor I cannot make sense
 
 
 ## Packages
