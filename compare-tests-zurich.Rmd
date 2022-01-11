@@ -1,9 +1,10 @@
 ---
 title: "Compare two versions of a multiple-choice test (ETH Zurich)"
 author: "George Kinnear"
-date: '2021-10-05'
+date: '2022-01-11'
 output:
   html_document:
+    code_folding: hide
     toc: yes
     toc_float: yes
 editor_options:
@@ -25,6 +26,7 @@ library(ggrepel)   # For labelling points without overlap
 library(skimr)     # For data frame level summary
 library(ggridges)  # For ridge plots
 library(plotly)    # For interactive plots
+library(kableExtra)# For formatting tables (with grouped rows)
 ```
 
 # 1. Data
@@ -112,16 +114,19 @@ test_scores = bind_rows(
 )
 ```
 
+<details>
+    <summary>Show data summary</summary>
+```{r data-peek}
+skim(test_scores)
+```
+</details>
+
 The scores are:
 
 * 0 if the student gave an incorrect response
 * 1 if the student gave a correct response
 * 2 if the student chose the "I don't know" answer option
 * NA if there was no response recorded
-
-```{r data-peek}
-test_scores
-```
 
 For this analysis, we replace the "2 = I don't know" scores with 0, reflecting a non-correct answer.
 
@@ -134,7 +139,7 @@ test_scores <- test_scores %>%
 
 The number of responses from each cohort:
 
-```{r skim-classes}
+```{r skim-classes, warning=FALSE}
 test_scores %>% 
   group_by(year) %>% 
   tally() %>% 
@@ -145,7 +150,7 @@ test_scores %>%
   )
 ```
 
-Mean and standard deviation for each item:
+Mean and standard deviation for each item (note this table is very wide - see the scroll bar at the bottom!):
 
 ```{r skim-all-data}
 test_scores %>% 
@@ -186,193 +191,18 @@ Since the combined data on the two versions of the test have large portions of "
 
 Instead, in the next section we proceed directly to fitting the IRT model, and using the $Q_3$ check for local independence. In the final section, we also run a factor analysis for the data from the new test only.
 
-> **TODO** delete the rest of the contents of this section?!
+# 3. Fitting 2 parameter logistic MIRT model
 
-### Local independence
+We use the `mirt` package to fit an item response theory model.
 
-This plot shows the correlations between scores on each pair of items -- note that it is restricted to only those items that appear on both versions of the test, since the plotting package did not deal well with missing data:
+For this analysis, we use the 2 parameter logistic (2PL) model.
 
-**TODO** - check with Mine that this is a valid way to proceed (throwing out questions with missing data)
-
-```{r corr-plot}
+<details>
+    <summary>Show model fitting output</summary>
+```{r fit-mirt, warning=FALSE, message=FALSE}
 item_scores <- test_scores %>% 
   select(-class, -year, -test_version)
 
-item_scores_unchanged_only <- item_scores %>% 
-  select(!contains("B0")) %>% select(!contains("A0"))
-
-cor_ci <- psych::corCi(item_scores_unchanged_only, plot = FALSE)
-
-psych::cor.plot.upperLowerCi(cor_ci)
-```
-
-**TODO** - add some notes here to explain how to interpret all of this!
-
-There are a few correlations that are not significantly different from 0:
-
-```{r cor-not-corr}
-cor_ci$ci %>% 
-  as_tibble(rownames = "corr") %>% 
-  filter(p > 0.05) %>% 
-  arrange(-p) %>% 
-  select(-contains(".e")) %>% 
-  gt() %>% 
-  fmt_number(columns = 2:4, decimals = 3)
-```
-
-Here we redo the correlation calculations with all the items, and check that there are still few cases where the correlations close to 0:
-
-```{r}
-cor_ci2 <- psych::corCi(item_scores, plot = FALSE)
-cor_ci2$ci %>% 
-  as_tibble(rownames = "corr") %>% 
-  filter(p > 0.05) %>% 
-  arrange(-p) %>% 
-  select(-contains(".e")) %>% 
-  gt() %>% 
-  fmt_number(columns = 2:4, decimals = 3)
-```
-
-
-The overall picture is that the item scores are well correlated with each other.
-
-### Dimensionality
-
-Here we again focus on the subset of items that appeared in both tests.
-
-```{r fa-checks}
-structure <- check_factorstructure(item_scores_unchanged_only)
-n <- n_factors(item_scores_unchanged_only)
-```
-
-```{r fa-structure-check, echo=FALSE, results="asis"}
-# check_factorstructure(item_scores)
-
-# HACK - to make the heading printed by easystats be h4 rather than h1, use ### 
-# TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
-
-res <- capture.output(structure)
-cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
-```
-
-```{r fa-num-factors, echo=FALSE, results = "asis"}
-res <- capture.output(n)
-cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
-```
-
-```{r fa-num-factors-details}
-plot(n)
-summary(n) %>% gt()
-#n %>% tibble() %>% gt()
-```
-
-
-```{r fa-scree}
-fa.parallel(item_scores_unchanged_only, fa = "fa")
-```
-
-### 1 Factor
-
-```{r fa1}
-item_scores_unchanged_only_and_no_na <- item_scores_unchanged_only %>%
-  mutate(
-    across(everything(), ~replace_na(.x, 0))
-  )
-fitfact <- factanal(item_scores_unchanged_only_and_no_na, factors = 1, rotation = "varimax")
-print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
-
-load <- tidy(fitfact)
-
-ggplot(load, aes(x = fl1, y = 0)) + 
-  geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
-  labs(x = "Factor 1", y = NULL,
-       title = "Standardised Loadings", 
-       subtitle = "Based upon correlation matrix") +
-  theme_minimal()
-```
-
-```{r}
-load %>% 
-  select(question = variable, factor_loading = fl1) %>% 
-  left_join(test_versions %>% select(question = label, description), by = "question") %>% 
-  arrange(-factor_loading) %>% 
-  gt() %>%
-  data_color(
-    columns = contains("factor"),
-    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
-  )
-```
-
-
-
-### 3 Factor
-
-Here we also investigate the 3-factor solution, to see whether these factors are interpretable.
-
-```{r fa4}
-fitfact3 <- factanal(item_scores_unchanged_only_and_no_na, factors = 3, rotation = "varimax")
-print(fitfact3, digits = 2, cutoff = 0.3, sort = TRUE)
-
-load3 <- tidy(fitfact3)
-
-ggplot(load3, aes(x = fl1, y = fl2)) + 
-  geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
-  labs(x = "Factor 1", y = "Factor 2",
-       title = "Standardised Loadings", 
-       subtitle = "Based upon correlation matrix") +
-  theme_minimal()
-```
-
-```{r}
-main_factors <- load3 %>% 
-#  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
-  pivot_longer(names_to = "factor",
-               cols = contains("fl")) %>% 
-  mutate(value_abs = abs(value)) %>% 
-  group_by(variable) %>% 
-  top_n(1, value_abs) %>% 
-  ungroup() %>% 
-  transmute(main_factor = factor, variable)
-
-library(kableExtra)
-load3 %>% 
-  select(-uniqueness) %>% 
-  # add the info about which is the main factor
-  left_join(main_factors) %>%
-  left_join(test_versions %>% select(variable = label, description)) %>% 
-  arrange(main_factor) %>% 
-  select(main_factor, everything()) %>% 
-  # arrange adjectives by descending loading on main factor
-  rowwise() %>% 
-  mutate(max_loading = max(abs(c_across(starts_with("fl"))))) %>% 
-  group_by(main_factor) %>% 
-  arrange(-max_loading, .by_group = TRUE) %>% 
-  select(-max_loading) %>% 
-  # sort out the presentation
-  rename("Main Factor" = main_factor, # the _ throws a latex error
-         "Question" = variable) %>%
-  mutate_at(
-    vars(starts_with("fl")),
-    ~ cell_spec(round(., digits = 3), bold = if_else(abs(.) > 0.4, T, F))
-  ) %>% 
-  kable(booktabs = T, escape = F, longtable = T) %>% 
-  kableExtra::collapse_rows(columns = 1, valign = "top") %>%
-  kableExtra::kable_styling(latex_options = c("repeat_header"))
-```
-
-# 3. Fitting 2 parameter logistic MIRT model
-
-We can fit a Multidimensional Item Response Theory (mirt) model. From the function definition:
-
-```
-mirt fits a maximum likelihood (or maximum a posteriori) factor analysis model to any mixture of dichotomous and polytomous data under the item response theory paradigm using either Cai's (2010) Metropolis-Hastings Robbins-Monro (MHRM) algorithm.
-```
-
-The process is to first fit the model, and save the result as a model object that we can then parse to get tabular or visual displays of the model that we might want. When fitting the model, we have the option to specify a few arguments, which then get interpreted as parameters to be passed to the model.
-
-```{r fit-mirt, warning=FALSE, message=FALSE}
 fit_2pl <- mirt(
   data = item_scores, # just the columns with question scores
   #removeEmptyRows = TRUE, 
@@ -381,6 +211,8 @@ fit_2pl <- mirt(
   SE = TRUE           # estimate standard errors
   )
 ```
+</details>
+
 ## Local independence
 
 We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
@@ -397,11 +229,11 @@ This shows that most item pairs are independent, with only a couple of pairs sho
 
 ```{r}
 residuals_2pl %>%
-  rownames_to_column(var = "q1") %>%
+  rownames_to_column(var = "item1") %>%
   as_tibble() %>% 
-  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "item2", values_to = "Q3_score") %>% 
   filter(abs(Q3_score) > 0.2) %>% 
-  filter(parse_number(q1) < parse_number(q2)) %>%
+  filter(parse_number(item1) < parse_number(item2)) %>%
   gt()
 ```
 
@@ -414,7 +246,7 @@ In fact, both of these pairs highlight questions that were removed from the test
 Given that this violation of the local independence assumption is very mild, we proceed using this model.
 
 ## Model parameters
-We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
+We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default.
 
 ```{r augment-with-f1}
 test_scores <- test_scores %>%
@@ -427,68 +259,22 @@ We can also calculate the model coefficient estimates using a generic function `
 coefs_2pl <- coef(fit_2pl, IRTpars = TRUE)
 ```
 
-The resulting object `coefs` is a list, with one element for each question, and an additional `GroupPars` element that we won't be using. The output is a bit long, so we're only showing a few of the elements here:
-
-```{r peek-coefs}
-coefs_2pl[1:3]
-# coefs_2pl[35:37]
-```
-
-Let's take a closer look at the first element:
-
-```{r coef-1}
-coefs_2pl[1]
-```
-
-In this output:
+The resulting object `coefs` is a list, with one element for each question, and an additional `GroupPars` element that we won't be using. For each question, the object records several values:
 
 * `a` is discrimination
 * `b` is difficulty
 * endpoints of the 95% confidence intervals are also shown
 
-To make this output a little more user friendly, we should tidy it such that we have a row per question. We'll do this in two steps. First, write a function that tidies the output for one question, i.e. one list element. Then, map this function over the list of all questions, resulting in a data frame.
-
-```{r f-tidy-mirt-coefs}
-tidy_mirt_coefs <- function(x){
-  x %>%
-    # melt the list element
-    melt() %>%
-    # convert to a tibble
-    as_tibble() %>%
-    # convert factors to characters
-    mutate(across(where(is.factor), as.character)) %>%
-    # only focus on rows where X2 is a or b (discrimination or difficulty)
-    filter(X2 %in% c("a", "b")) %>%
-    # in X1, relabel par (parameter) as est (estimate)
-    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
-    # unite columns X2 and X1 into a new column called var separated by _
-    unite(X2, X1, col = "var", sep = "_") %>%
-    # turn into a wider data frame
-    pivot_wider(names_from = var, values_from = value)
-}
-```
-
-Let's see what this does to a single element in `coefs`:
-
-```{r apply-once-tidy-mirt-coefs}
-tidy_mirt_coefs(coefs_2pl[1])
-```
-
-And now let's map it over all elements of coefs:
+To make this output a little more user friendly, we use the `tidy_mirt_coefs` function that we have provided in `common-functions.R`, to produce a single data frame with a row for each question.
 
 ```{r map-tidy-mirt-coefs}
+source("common-functions.R")
 # use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
 tidy_2pl <- map_dfr(head(coefs_2pl, -1), tidy_mirt_coefs, .id = "Question") %>% 
   left_join(test_versions, by = c("Question" = "label"))
 ```
 
-A quick peek at the result:
-
-```{r peek-tidy-output}
-tidy_2pl
-```
-
-And a nicely formatted table of the result:
+Here is a nicely formatted table of the result:
 
 ```{r tabulate-tidy-output}
 tidy_2pl %>%
@@ -517,13 +303,16 @@ tidy_2pl %>%
   )
 ```
 
+These values are also saved to the file `data-eth/OUT_2pl-results.csv`.
+
 ```{r save-2pl-results}
 tidy_2pl %>% 
   write_csv("data-eth/OUT_2pl-results.csv")
 ```
 
 
-```{r wright-map}
+```{r wright-map, eval=FALSE, include=FALSE}
+# Basic version of the wright map
 tidy_2pl %>% 
   mutate(qnum = parse_number(Question)) %>% 
   ggplot(aes(x = qnum, y = b_est, label = Question)) +
@@ -662,9 +451,11 @@ ggplotly(plt_gg, tooltip = "text")
 
 
 
-# 4. Factor analysis for the new test only
+# 4. Factor analysis for the new test only {.tabset}
 
-Here we redo the factor analysis, but using only the data from the new version of the test
+## Factor analysis setup
+
+Here we redo the factor analysis, but using only the data from the new version of the test.
 
 ```{r}
 item_scores_B <- test_scores %>% 
@@ -674,6 +465,7 @@ item_scores_B <- test_scores %>%
   select(-class, -year, -test_version)
 ```
 
+The `parameters` package provides functions that run various checks to see if the data is suitable for factor analysis, and if so, how many factors should be retained.
 
 ```{r fa-checks-B}
 structure <- check_factorstructure(item_scores_B)
@@ -701,19 +493,27 @@ summary(n) %>% gt()
 #n %>% tibble() %>% gt()
 ```
 
+The scree plot shows the eignvalues associated with each factor:
 
 ```{r fa-scree-B}
 fa.parallel(item_scores_B, fa = "fa")
 ```
 
-### 1 Factor
+Based on this, there is clear support for a 1-factor solution. We also consider the 4-factor solution.
 
+## 1 Factor
+
+<details>
+    <summary>Show factanal output</summary>
 ```{r fa1-B}
 fitfact <- factanal(item_scores_B, factors = 1, rotation = "varimax")
 print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load <- tidy(fitfact)
+```
+</details>
 
+```{r warning=FALSE}
 ggplot(load, aes(x = fl1, y = 0)) + 
   geom_point() + 
   geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
@@ -722,6 +522,7 @@ ggplot(load, aes(x = fl1, y = 0)) +
        subtitle = "Based upon correlation matrix") +
   theme_minimal()
 ```
+
 
 ```{r}
 load %>% 
@@ -737,18 +538,23 @@ load %>%
 
 The questions that load most strongly on this factor are very standard calculations in integration, differentiation, and trigonometry -- which is consistent with the aim of the test.
 
-> **TODO** - disappointing that the new questions are all at the low end of this table?
+> **TODO** - add comment saying it is disappointing that the new questions are all at the low end of this table?
 
-### 4 Factor
+## 4 Factor
 
 Here we also investigate the 4-factor solution, to see whether these factors are interpretable.
 
+<details>
+    <summary>Show factanal output</summary>
 ```{r fa4-B}
 fitfact4 <- factanal(item_scores_B, factors = 4, rotation = "varimax")
 print(fitfact4, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load4 <- tidy(fitfact4)
+```
+</details>
 
+```{r}
 ggplot(load4, aes(x = fl1, y = fl2)) + 
   geom_point() + 
   geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
@@ -758,7 +564,7 @@ ggplot(load4, aes(x = fl1, y = fl2)) +
   theme_minimal()
 ```
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 main_factors <- load4 %>% 
 #  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
   pivot_longer(names_to = "factor",
@@ -769,12 +575,11 @@ main_factors <- load4 %>%
   ungroup() %>% 
   transmute(main_factor = factor, variable)
 
-library(kableExtra)
 load4 %>% 
   select(-uniqueness) %>% 
   # add the info about which is the main factor
-  left_join(main_factors) %>%
-  left_join(test_versions %>% select(variable = label, description)) %>% 
+  left_join(main_factors, by = "variable") %>%
+  left_join(test_versions %>% select(variable = label, description), by = "variable") %>% 
   arrange(main_factor) %>% 
   select(main_factor, everything()) %>% 
   # arrange adjectives by descending loading on main factor
@@ -807,6 +612,12 @@ load4 %>%
 > 
 > And of the fourth factor I cannot make sense
 
+
+# About this report
+
+This report supports the analysis in the following paper:
+
+> [citation needed]
 
 ## Packages
 
