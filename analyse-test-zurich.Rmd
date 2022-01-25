@@ -501,6 +501,22 @@ plot(fit_2pl, type = "infoSE", main = "Test information")
 plot(fit_2pl, type = "infotrace", main = "Item information curves")
 ```
 
+### Information values
+
+```{r}
+Theta <- matrix(seq(-4,4,.01))
+tinfo <- testinfo(fit_2pl, Theta)
+plot(Theta, tinfo, type = 'l')
+```
+
+```{r}
+info_2pl <- areainfo(fit_2pl, c(-4,4))
+info_2pl %>% gt()
+```
+
+This shows that the total information in the test is `r info_2pl$TotalInfo`.
+
+
 ## Response curves
 
 ```{r}
