@@ -395,29 +395,41 @@ info_2pl %>% gt()
 
 This shows that the total information in all items (from both versions A and B of the test) is `r info_2pl$TotalInfo`.
 
-### Unchanged questions
+### Information by item
 
 ```{r}
-unchanged_items <- test_versions %>% filter(!is.na(pre), !is.na(post)) %>% pull(item_num)
-info_retained <- areainfo(fit_2pl, c(-4,4), which.items = unchanged_items)
-info_retained %>% gt()
+tidy_info <- test_versions %>%
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(fit_2pl,
+               c(-4, 4),
+               which.items = .x) %>% pull(TotalInfo)
+  ))
+
+tidy_info %>%
+  select(label, TotalInfo, description, outcome) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
 ```
 
-### Removed questions
 
-```{r}
-removed_items <- test_versions %>% filter(is.na(post)) %>% pull(item_num)
-info_removed <- areainfo(fit_2pl, c(-4,4), which.items = removed_items)
-info_removed %>% gt()
-```
+### Groups of questions
 
-### Added questions
-
-```{r}
-added_items <- test_versions %>% filter(is.na(pre)) %>% pull(item_num)
-info_added <- areainfo(fit_2pl, c(-4,4), which.items = added_items)
-info_added %>% gt()
-```
+Grouping the questions into those that were unchanged, removed and added between the two versions:
 
 ```{r}
 versions_info <- purrr::map_dfr(
@@ -443,14 +455,6 @@ versions_info %>%
 ```
 
 ### Mean information
-
-The mean information in the `r info_removed$nitems` removed questions was `r info_removed$TotalInfo/info_removed$nitems`.
-
-The mean information in the `r info_added$nitems` added questions was `r info_added$TotalInfo/info_added$nitems`.
-
-Thus, relative to the expected information if we had simply picked `r info_added$nitems` out of the `r info_removed$nitems` removed items to retain, the new questions have added `r info_added$nitems*(info_added$TotalInfo/info_added$nitems - info_removed$TotalInfo/info_removed$nitems)` to the information.
-
-This is very small relative to the total information in the test. 
 
 Thus, while the changes to the test have not increased the overall information in the test (and in fact have slightly decreased it due to there being fewer questions), they _have_ increased the mean information per question on the test:
 
