@@ -85,7 +85,8 @@ test_versions <- read_csv("data-eth/eth-metadata.csv") %>%
       !is.na(pre) & !is.na(post) ~ str_glue("{pre}_{post}"),
       !is.na(pre) & is.na(post) ~ str_glue("{pre}_B0"),
       is.na(pre) & !is.na(post) ~ str_glue("A0_{post}"),
-    )
+    ),
+    item_num = row_number()
   ) %>% 
   mutate(
     outcome = case_when(
@@ -381,6 +382,103 @@ plot(fit_2pl, type = "infoSE", main = "Test information")
 ```{r}
 plot(fit_2pl, type = "infotrace", main = "Item information curves")
 ```
+
+## Total information
+
+Using `mirt`'s `areainfo` function, we can find the total area under the information curves.
+
+```{r}
+all_items = test_versions %>% filter(!is.na(pre) | !is.na(post)) %>% pull(item_num) # amend the filter to consider different subsets of items
+info_2pl <- areainfo(fit_2pl, c(-4,4), which.items = all_items)
+info_2pl %>% gt()
+```
+
+This shows that the total information in all items (from both versions A and B of the test) is `r info_2pl$TotalInfo`.
+
+### Unchanged questions
+
+```{r}
+unchanged_items <- test_versions %>% filter(!is.na(pre), !is.na(post)) %>% pull(item_num)
+info_retained <- areainfo(fit_2pl, c(-4,4), which.items = unchanged_items)
+info_retained %>% gt()
+```
+
+### Removed questions
+
+```{r}
+removed_items <- test_versions %>% filter(is.na(post)) %>% pull(item_num)
+info_removed <- areainfo(fit_2pl, c(-4,4), which.items = removed_items)
+info_removed %>% gt()
+```
+
+### Added questions
+
+```{r}
+added_items <- test_versions %>% filter(is.na(pre)) %>% pull(item_num)
+info_added <- areainfo(fit_2pl, c(-4,4), which.items = added_items)
+info_added %>% gt()
+```
+
+```{r}
+versions_info <- purrr::map_dfr(
+  c("unchanged", "removed", "added"),
+  ~ areainfo(
+    fit_2pl,
+    c(-4, 4),
+    which.items = test_versions %>% filter(outcome == .x) %>% pull(item_num)
+  ) %>% mutate(version = .x, .before = 1)
+) %>%
+  select(-LowerBound,-UpperBound,-Info,-Proportion) %>%
+  mutate(mean = TotalInfo / nitems)
+
+versions_info %>%
+  mutate(version = paste(str_to_title(version), "questions")) %>% 
+  gt() %>%
+  cols_label(
+    version = "Subset",
+    TotalInfo = "Total information",
+    nitems = "Number of items",
+    mean = "Mean information per item"
+  )
+```
+
+### Mean information
+
+The mean information in the `r info_removed$nitems` removed questions was `r info_removed$TotalInfo/info_removed$nitems`.
+
+The mean information in the `r info_added$nitems` added questions was `r info_added$TotalInfo/info_added$nitems`.
+
+Thus, relative to the expected information if we had simply picked `r info_added$nitems` out of the `r info_removed$nitems` removed items to retain, the new questions have added `r info_added$nitems*(info_added$TotalInfo/info_added$nitems - info_removed$TotalInfo/info_removed$nitems)` to the information.
+
+This is very small relative to the total information in the test. 
+
+Thus, while the changes to the test have not increased the overall information in the test (and in fact have slightly decreased it due to there being fewer questions), they _have_ increased the mean information per question on the test:
+
+```{r}
+info_old <- areainfo(fit_2pl,
+                     c(-4, 4),
+                     which.items = test_versions %>% filter(outcome %in% c("unchanged", "removed")) %>% pull(item_num))
+info_new <- areainfo(fit_2pl,
+                     c(-4, 4),
+                     which.items = test_versions %>% filter(outcome %in% c("unchanged", "added")) %>% pull(item_num))
+
+versions_info <- bind_rows("Version A" = info_old,
+                           "Version B" = info_new,
+                           .id = "version") %>% 
+  select(-LowerBound, -UpperBound, -Info, -Proportion) %>% 
+  mutate(mean = TotalInfo / nitems)
+
+versions_info %>% gt() %>%
+  cols_label(
+    version = "Test version",
+    TotalInfo = "Total information",
+    nitems = "Number of items",
+    mean = "Mean information per item"
+  )
+```
+
+
+
 
 ## Response curves
 
