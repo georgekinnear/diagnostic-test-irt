@@ -1,0 +1,521 @@
+---
+title: "Analysis of test with partial credit (University of Edinburgh)"
+author: "George Kinnear"
+date: '2022-01-12'
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+editor_options:
+  chunk_output_type: console
+---
+
+```{r load-packages, message=FALSE, include=FALSE}
+library(mirt)      # For IRT analysis
+library(psych)     # For factor analysis
+library(parameters)# For factor analysis
+library(tidyverse) # For data wrangling and visualisation
+library(reshape)   # For reshaping nested lists
+library(vroom)     # For reading in many files at once
+library(broom)     # For tidying model output
+library(fs)        # For file system operations
+library(gt)        # For formatting tables
+library(knitr)     # For markdown tables
+library(ggrepel)   # For labelling points without overlap
+library(skimr)     # For data frame level summary
+library(ggridges)  # For ridge plots
+library(plotly)    # For interactive plots
+
+# define a colour palette for the MATH taxonomy
+MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
+```
+
+# 1. Data
+
+Information about the test:
+
+```{r load-test-info, echo=FALSE, message=FALSE}
+item_info <- read_csv("data-uoe/edinburgh-diagtest-metadata.csv") %>% 
+  select(question = pre, description, MATH_group) %>% 
+  filter(!is.na(question))
+
+item_info %>%
+  gt() %>%
+  data_color(
+    columns = contains("MATH"),
+    colors = MATH_colours
+  )
+```
+
+Load the student scores for the test:
+
+```{r load-all-data, echo=FALSE, message=FALSE}
+# TODO - this file has multiple years, with no indication of which year each attempt comes from; it would be good to add that info
+test_scores <- vroom("data-uoe/ANON_DiagTest13to16.csv") %>% 
+  filter(!is.na(Total)) %>% 
+  mutate(year = "13-16") %>% 
+  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "A"))
+```
+
+```{r data-peek}
+test_scores %>% skim()
+```
+
+## Cleaning
+
+> **TODO** - filter out "nonserious" attempts
+
+
+## Data summary
+
+The number of responses from each class:
+
+```{r skim-classes}
+test_scores %>% 
+  tally() %>% 
+  gt() %>% 
+  data_color(
+    columns = c("n"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  )
+```
+
+Mean and standard deviation for each item:
+
+```{r skim-all-data}
+test_scores %>% 
+  select(-Start, -End, -Duration, -AnonID, -Total) %>% 
+  group_by(year) %>% 
+  skim_without_charts() %>% 
+  select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
+  rename(complete = complete_rate) %>% 
+  # make the table wider, i.e. with separate columns for each year's results, with the year at the start of each column name
+  pivot_wider(names_from = year, values_from = -c(skim_variable, year), names_glue = "{year}__{.value}") %>% 
+  # put the columns in order by year
+  select(sort(names(.))) %>% 
+  select(skim_variable, everything()) %>% 
+  # use GT to make the table look nice
+  gt(rowname_col = "skim_variable") %>% 
+  # group the columns from each year
+  tab_spanner_delim(delim = "__") %>%
+  fmt_number(columns = contains("numeric"), decimals = 2) %>%
+  fmt_percent(columns = contains("complete"), decimals = 0) %>% 
+  # change all the numeric.mean and numeric.sd column names to Mean and SD
+  cols_label(
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.mean"), label = "Mean") %>% deframe()
+  ) %>% 
+  cols_label(
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.sd"), label = "SD") %>% deframe()
+  ) %>%
+  data_color(
+    columns = contains("numeric.mean"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  )
+```
+
+# 2. Testing assumptions
+
+Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
+
+### Inter-item correlations
+
+If the test is unidimensional then we would expect student scores on pairs of items to be correlated.
+
+This plot shows the correlations between scores on each pair of items:
+
+```{r corr-plot}
+item_scores <- test_scores %>% 
+  select(starts_with("A"), -AnonID)
+
+cor_ci <- psych::corCi(item_scores, plot = FALSE)
+
+psych::cor.plot.upperLowerCi(cor_ci)
+```
+
+Checking for correlations that are not significantly different from 0, there are none:
+
+```{r cor-not-corr}
+cor_ci$ci %>% 
+  as_tibble(rownames = "corr") %>% 
+  filter(p > 0.05) %>% 
+  arrange(-p) %>% 
+  select(-contains(".e")) %>% 
+  gt() %>% 
+  fmt_number(columns = 2:4, decimals = 3)
+```
+
+The overall picture is that the item scores are well correlated with each other.
+
+### Dimensionality
+
+```{r fa-checks}
+structure <- check_factorstructure(item_scores)
+n <- n_factors(item_scores)
+```
+
+```{r fa-structure-check, echo=FALSE, results="asis"}
+# check_factorstructure(item_scores)
+
+# HACK - to make the heading printed by easystats be h4 rather than h1, use ### 
+# TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
+
+res <- capture.output(structure)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors, echo=FALSE, results = "asis"}
+res <- capture.output(n)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors-details}
+plot(n)
+summary(n) %>% gt()
+#n %>% tibble() %>% gt()
+```
+
+
+```{r fa-scree}
+fa.parallel(item_scores, fa = "fa")
+```
+
+### 1 Factor
+
+We use the `factanal` function to fit a 1-factor model.
+
+_Note that this function cannot handle missing data, so any `NA` scores must be set to `0` for this analysis._
+
+```{r fa1}
+fitfact <- factanal(item_scores,
+                    factors = 1,
+                    rotation = "varimax")
+print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load <- tidy(fitfact)
+
+ggplot(load, aes(x = fl1, y = 0)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(x = "Factor 1", y = NULL,
+       title = "Standardised Loadings", 
+       subtitle = "Based upon correlation matrix") +
+  theme_minimal()
+```
+
+```{r}
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(item_info, by = "question") %>% 
+  arrange(-factor_loading) %>% 
+  gt() %>%
+  data_color(
+    columns = contains("factor"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("MATH"),
+    colors = MATH_colours
+  )
+```
+
+> **TODO** George to add comments here
+
+
+### 3 Factor
+
+Here we also investigate the 3-factor solution, to see whether these factors are interpretable.
+
+```{r fa3}
+fitfact3 <- factanal(item_scores, factors = 3, rotation = "varimax")
+print(fitfact3, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load3 <- tidy(fitfact3)
+
+load3 %>%
+  left_join(item_info, by = c("variable"= "question")) %>%
+  ggplot(aes(x = fl1, y = fl2, colour = MATH_group)) +
+  geom_point() +
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(
+    x = "Factor 1",
+    y = "Factor 2",
+    title = "Standardised Loadings",
+    subtitle = "Showing the first 2 factors of the 3-factor model"
+  ) +
+  scale_colour_manual("MATH group", values = MATH_colours) +
+  theme_minimal()
+```
+
+```{r}
+main_factors <- load3 %>% 
+#  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
+  pivot_longer(names_to = "factor",
+               cols = contains("fl")) %>% 
+  mutate(value_abs = abs(value)) %>% 
+  group_by(variable) %>% 
+  top_n(1, value_abs) %>% 
+  ungroup() %>% 
+  transmute(main_factor = factor, variable)
+
+library(kableExtra)
+load3 %>% 
+  select(-uniqueness) %>% 
+  # add the info about which is the main factor
+  left_join(main_factors) %>%
+  left_join(item_info %>% select(variable = question, description, MATH_group)) %>% 
+  arrange(main_factor) %>% 
+  select(main_factor, everything()) %>% 
+  # arrange adjectives by descending loading on main factor
+  rowwise() %>% 
+  mutate(max_loading = max(abs(c_across(starts_with("fl"))))) %>% 
+  group_by(main_factor) %>% 
+  arrange(-max_loading, .by_group = TRUE) %>% 
+  select(-max_loading) %>% 
+  # sort out the presentation
+  rename("Main Factor" = main_factor, # the _ throws a latex error
+         "Question" = variable) %>%
+  mutate_at(
+    vars(starts_with("fl")),
+    ~ cell_spec(round(., digits = 3), bold = if_else(abs(.) > 0.4, T, F))
+  ) %>% 
+  kable(booktabs = T, escape = F, longtable = T) %>% 
+  kableExtra::collapse_rows(columns = 1, valign = "top") %>%
+  kableExtra::kable_styling(latex_options = c("repeat_header"))
+```
+
+> **TODO** George to comment
+
+# 3. Fitting IRT model
+
+> **TODO** - some intro narrative here
+
+```{r fit-mirt, warning=FALSE, message=FALSE}
+fit_gpcm <- mirt(
+  data = item_scores, # just the columns with question scores
+  model = 1,          # number of factors to extract
+  itemtype = "gpcm",  # generalised partial credit model
+  SE = TRUE           # estimate standard errors
+  )
+```
+
+> **TODO** There are warnings given here about questions being "re-mapped to ensure all categories have a distance of 1"
+
+## Local independence
+
+We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+residuals <- residuals(fit_gpcm, type = "Q3") %>% data.frame
+```
+```{r}
+residuals  %>% as.matrix() %>% 
+  corrplot::corrplot(type = "upper")
+```
+
+This shows that most item pairs are independent, with only one pair showing cause for concern:
+
+```{r}
+residuals %>%
+  rownames_to_column(var = "item1") %>%
+  as_tibble() %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "item2", values_to = "Q3_score") %>% 
+  filter(abs(Q3_score) > 0.2) %>% 
+  filter(parse_number(item1) < parse_number(item2)) %>%
+  gt()
+```
+
+Items A16 and A17 are on the chain rule (e.g. differentiating $\cos(4x^2+5)$ and $(3x^2-8)^3$ respectively), so it is perhaps unsurprising that students' performance on these items is not entirely independent.
+
+Given that this violation of the local independence assumption is very mild, we proceed using this model.
+
+## Model parameters
+
+We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
+
+```{r augment-with-f1}
+test_scores_with_ability <- test_scores %>%
+  mutate(F1 = fscores(fit_gpcm, method = "EAP"))
+```
+
+We can also calculate the model coefficient estimates using a generic function `coef()` which is used to extract model coefficients from objects returned by modeling functions. We will set the `IRTpars` argument to `TRUE`, which means slope intercept parameters will be converted into traditional IRT parameters.
+
+```{r extract-coefs}
+coefs_gpcm <- coef(fit_gpcm, IRTpars = TRUE)
+```
+
+We use a modified version of the `tidy_mirt_coeffs` function to get all the parameter estimates into a tidy table:
+
+```{r map-tidy-mirt-coefs}
+tidy_mirt_coefs <- function(x){
+  x %>%
+    # melt the list element
+    melt() %>%
+    # convert to a tibble
+    as_tibble() %>%
+    # convert factors to characters
+    mutate(across(where(is.factor), as.character)) %>%
+    # only focus on rows where X2 is a, or starts with b (the parameters in the GPCM)
+    filter(X2 == "a" | str_detect(X2, "^b")) %>%
+    # in X1, relabel par (parameter) as est (estimate)
+    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
+    # turn into a wider data frame
+    pivot_wider(names_from = X1, values_from = value) %>% 
+    rename(par = X2)
+}
+
+# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
+tidy_gpcm <- map_dfr(head(coefs_gpcm, -1), tidy_mirt_coefs, .id = "Question")
+```
+
+```{r}
+tidy_gpcm %>% 
+  filter(par == "a") %>% 
+  select(-par) %>% 
+  rename_with(.fn = ~ paste0("a_", .x), .cols = -Question) %>% 
+  left_join(
+    tidy_gpcm %>% 
+      filter(str_detect(par, "^b")),
+    by = "Question"
+  ) %>% 
+  gt(groupname_col = "Question") %>%
+  fmt_number(columns = contains("est|_"), decimals = 3) %>%
+  data_color(
+    columns = contains("a_"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = c("est", "CI_2.5", "CI_97.5"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  ) %>%
+  tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
+  tab_spanner(label = "Difficulty", columns = c("par", "est", "CI_2.5", "CI_97.5"))
+```
+
+
+```{r save-results}
+tidy_gpcm %>% 
+  write_csv("data-uoe/OUT_gpcm-results-pre-only.csv")
+```
+
+
+
+> TODO - fix from here onward!
+
+
+
+## Information curves
+
+
+### Test information curve
+
+```{r}
+plot(fit_gpcm, type = "infoSE", main = "Test information")
+```
+
+### Item information curves
+
+```{r}
+plot(fit_gpcm, type = "infotrace", main = "Item information curves")
+```
+
+## Total information
+
+Using `mirt`'s `areainfo` function, we can find the total area under the information curves.
+
+```{r}
+info_gpcm <- areainfo(fit_gpcm, c(-4,4))
+info_gpcm %>% gt()
+```
+
+This shows that the total information in all items is `r info_gpcm$TotalInfo`.
+
+## Response curves
+
+
+### Test response curves
+
+```{r}
+plot(fit_gpcm, type = "score", auto.key = FALSE)
+```
+
+### Item response curves
+
+We can get individual item surface and information plots using the `itemplot()` function from the **mirt** package, e.g.
+
+```{r}
+mirt::itemplot(fit_gpcm, item = 1, 
+               main = "Trace lines for item 1")
+```
+
+We can also get the plots for all trace lines, one facet per plot.
+
+```{r}
+plot(fit_gpcm, type = "trace", auto.key = FALSE)
+```
+
+Or all of them overlaid in one plot.
+
+```{r}
+plot(fit_gpcm, type = "trace", facet_items=FALSE)
+```
+
+An alternative approach is using ggplot2 and plotly to add interactivity to make it easier to identify items.
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+# store the object
+plt <- plot(fit_gpcm, type = "trace", facet_items = FALSE)
+# the data we need is in panel.args
+# TODO - I had to change the [[1]] to [[2]] since the plt has two panels for some reason, with the one we want being the 2nd panel
+plt_data <- tibble(
+  x          = plt$panel.args[[2]]$x,
+  y          = plt$panel.args[[2]]$y,
+  subscripts = plt$panel.args[[2]]$subscripts,
+  item       = rep(colnames(item_scores), each = 200)
+) %>%
+  mutate(
+    item_no = str_remove(item, "A") %>% as.numeric(),
+    item    = fct_reorder(item, item_no)
+    )
+
+head(plt_data)
+
+plt_gg <- ggplot(plt_data, aes(x, y, 
+                          colour = item, 
+                          text = item)) + 
+  geom_line() + 
+  labs(
+    title = "2PL - Trace lines",
+    #x = expression(theta),
+    x = "theta",
+    #y = expression(P(theta)),
+    y = "P(theta)",
+    colour = "Item"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggplotly(plt_gg, tooltip = "text")
+```
+
+
+
+
+## Packages
+
+In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
+
+- [**mirt**](https://cran.r-project.org/web/packages/mirt/mirt.pdf): For IRT analysis
+- [**psych**](https://personality-project.org/r/psych/): For factor analysis
+- [**tidyverse**](https://tidyverse.org/): For data wrangling and visualisation
+- [**reshape**](http://had.co.nz/reshape/): For reshaping nested lists
+- [**vroom**](https://vroom.r-lib.org/): For reading in many files at once
+- [**broom**](https://broom.tidymodels.org/): For tidying model output
+- [**fs**](https://fs.r-lib.org/): For file system operations
+- [**gt**](https://gt.rstudio.com/): For formatting tables
+- [**knitr**](https://yihui.org/knitr/): For markdown tables
+- [**ggrepel**](https://ggrepel.slowkow.com/): For labelling points without overlap
+- [**skimr**](https://docs.ropensci.org/skimr/): For data frame level summary
+- [**ggridges**](https://wilkelab.org/ggridges/): For ridge plots
+
+
