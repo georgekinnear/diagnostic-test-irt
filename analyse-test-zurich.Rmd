@@ -223,7 +223,7 @@ load %>%
   )
 ```
 
-> **TODO** Meike to offer some comments here about whether there is any apparent meaning in the factor
+This factor appears to be dominated by "procedural calculus skills": standard calculation of derivatives, integral and some trigonometry.
 
 
 ### 6 Factor
@@ -282,7 +282,11 @@ load6 %>%
   kableExtra::kable_styling(latex_options = c("repeat_header"))
 ```
 
-> **TODO** Meike to comment
+Here, the first factor seems better described by "abstract understanding of calculus". The second is based on "graphical understanding of calculus".
+
+The third and fourth factors are "procedural calculus skills", with the product and quotient rules distinguished in the fourth factor.
+
+The fifth and sixth factors have a geometrical flavour, with the fifth factor in particular being about "vector geometry".
 
 # 3. Fitting 2 parameter logistic MIRT model
 
@@ -409,7 +413,10 @@ tidy_2pl
 And a nicely formatted table of the result:
 
 ```{r tabulate-tidy-output}
-gt(tidy_2pl) %>%
+tidy_2pl %>% 
+  # remove the redundant g_ variables which only make sense for the 3PL model
+  select(-starts_with("g_")) %>% 
+  gt() %>% 
   fmt_number(columns = contains("_"), decimals = 3) %>%
   data_color(
     columns = contains("a_"),
@@ -570,7 +577,6 @@ An alternative approach is using ggplot2 and plotly to add interactivity to make
 # store the object
 plt <- plot(fit_2pl, type = "trace", facet_items = FALSE)
 # the data we need is in panel.args
-# TODO - I had to change the [[1]] to [[2]] since the plt has two panels for some reason, with the one we want being the 2nd panel
 plt_data <- tibble(
   x          = plt$panel.args[[2]]$x,
   y          = plt$panel.args[[2]]$y,
