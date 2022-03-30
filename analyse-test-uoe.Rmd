@@ -232,19 +232,27 @@ print(fitfact3, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load3 <- tidy(fitfact3)
 
-load3 %>%
+load3_plot <- load3 %>%
   left_join(item_info, by = c("variable"= "question")) %>%
-  ggplot(aes(x = fl1, y = fl2, colour = MATH_group)) +
+  ggplot(aes(x = fl1, y = fl2, colour = MATH_group, shape = MATH_group)) +
   geom_point() +
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  geom_text_repel(aes(label = paste0("A", rownames(load3))), show.legend = FALSE, alpha = 0.6) +
   labs(
-    x = "Factor 1",
-    y = "Factor 2",
-    title = "Standardised Loadings",
-    subtitle = "Showing the first 2 factors of the 3-factor model"
+    x = "Factor 1 (of 3)",
+    y = "Factor 2 (of 3)"
   ) +
   scale_colour_manual("MATH group", values = MATH_colours) +
+  scale_shape_manual(name = "MATH group", values = c(19, 17)) +
   theme_minimal()
+
+load3_plot +
+  labs(
+    title = "Standardised Loadings",
+    subtitle = "Showing the first 2 factors of the 3-factor model"
+  )
+
+ggsave("uoe_3factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
+       plot = load3_plot)
 ```
 
 ```{r}
