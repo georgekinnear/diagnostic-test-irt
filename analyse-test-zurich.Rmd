@@ -124,7 +124,7 @@ test_scores %>%
 
 # 2. Testing assumptions
 
-Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
+Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of *unidimensionality* in the test scores.
 
 ### Inter-item correlations
 
@@ -141,7 +141,7 @@ cor_ci <- psych::corCi(item_scores, plot = FALSE)
 psych::cor.plot.upperLowerCi(cor_ci)
 ```
 
-There are a few correlations that are not significantly different from 0:
+Almost all correlations are significantly different from 0 - the only one that is not is:
 
 ```{r cor-not-corr}
 cor_ci$ci %>% 
@@ -153,9 +153,11 @@ cor_ci$ci %>%
   fmt_number(columns = 2:4, decimals = 3)
 ```
 
-The overall picture is that the item scores are well correlated with each other.
+Thus, the overall picture is that the item scores are well correlated with each other.
 
 ### Dimensionality
+
+We use *factor analysis* as another way to assess unidimensionality. We are looking to see whether a 1-factor solution is feasible.
 
 ```{r fa-checks}
 structure <- check_factorstructure(item_scores)
@@ -187,6 +189,8 @@ summary(n) %>% gt()
 ```{r fa-scree}
 fa.parallel(item_scores, fa = "fa")
 ```
+
+This shows that both the 6-factor and 1-factor solutions are worth exploring.
 
 ### 1 Factor
 
@@ -287,6 +291,25 @@ Here, the first factor seems better described by "abstract understanding of calc
 The third and fourth factors are "procedural calculus skills", with the product and quotient rules distinguished in the fourth factor.
 
 The fifth and sixth factors have a geometrical flavour, with the fifth factor in particular being about "vector geometry".
+
+## Conclusion
+
+The 6-factor solution does seem to be interpretable, however the 1-factor solution is still reasonable. In terms of explaining the variance in the data, the 1-factor solution does a good job at capturing a large chunk:
+
+```{r}
+# Compute the proportion of variance explained; see https://stackoverflow.com/a/58159992/17459126
+x1 <- loadings(fitfact)
+propvar1 <- colSums(x1^2)/nrow(x1)
+
+rbind(`Proportion Var` = propvar1, `Cumulative Var` = cumsum(propvar1))
+
+x6 <- loadings(fitfact6)
+propvar6 <- colSums(x6^2)/nrow(x6)
+
+rbind(`Proportion Var` = propvar6, `Cumulative Var` = cumsum(propvar6))
+```
+
+Therefore, we are justified in proceeding with a unidimensional IRT model.
 
 # 3. Fitting 2 parameter logistic MIRT model
 
