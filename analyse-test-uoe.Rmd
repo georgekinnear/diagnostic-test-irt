@@ -419,6 +419,26 @@ tidy_gpcm %>%
 
 ```{r}
 plot(fit_gpcm, type = "infoSE", main = "Test information")
+
+plt <- plot(fit_gpcm, type = "infoSE", main = "Test information")
+# the data we need is in panel.args
+# TODO - I had to change the [[1]] to [[2]] since the plt has two panels for some reason, with the one we want being the 2nd panel
+plt_data <- tibble(
+  x          = plt$panel.args[[1]]$x,
+  y          = plt$panel.args[[1]]$y
+)
+ggplot(plt_data, aes(x, y)) + 
+  geom_line() + 
+  labs(
+    title = "2PL - Test information",
+    #x = expression(theta),
+    x = "theta",
+    #y = expression(P(theta)),
+    y = "P(theta)",
+    colour = "Item"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
 ```
 
 ### Item information curves
