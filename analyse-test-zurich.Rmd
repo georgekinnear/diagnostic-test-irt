@@ -187,7 +187,9 @@ summary(n) %>% gt()
 
 
 ```{r fa-scree}
+pdf(file = "output/eth_pre_scree.pdf", width = 6, height = 4)
 fa.parallel(item_scores, fa = "fa")
+dev.off()
 ```
 
 This shows that both the 6-factor and 1-factor solutions are worth exploring.
@@ -321,6 +323,8 @@ mirt fits a maximum likelihood (or maximum a posteriori) factor analysis model t
 
 The process is to first fit the model, and save the result as a model object that we can then parse to get tabular or visual displays of the model that we might want. When fitting the model, we have the option to specify a few arguments, which then get interpreted as parameters to be passed to the model.
 
+<details>
+    <summary>Show model fitting output</summary>
 ```{r fit-mirt, warning=FALSE, message=FALSE}
 fit_2pl <- mirt(
   data = item_scores, # just the columns with question scores
@@ -329,6 +333,7 @@ fit_2pl <- mirt(
   SE = TRUE           # estimate standard errors
   )
 ```
+</details>
 
 ## Local independence
 
@@ -479,7 +484,7 @@ tidy_2pl %>%
 
 ```{r save-2pl-results}
 tidy_2pl %>% 
-  write_csv("data-eth/OUT_2pl-results-pre-only.csv")
+  write_csv("output/eth_pre_2pl-results.csv")
 ```
 
 ## Comparing years and classes
@@ -744,7 +749,7 @@ tidy_3pl %>%
 
 ```{r save-3pl-results}
 tidy_3pl %>% 
-  write_csv("data-eth/OUT_3pl-results-pre-only.csv")
+  write_csv("output/eth_pre_3pl-results.csv")
 ```
 
 > **TODO** some comment on the 3PL results - i.e. looks like guessing is indeed rare, but perhaps happening a bit in some questions (any ideas why?)

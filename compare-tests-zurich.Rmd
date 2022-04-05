@@ -304,11 +304,11 @@ tidy_2pl %>%
   )
 ```
 
-These values are also saved to the file `data-eth/OUT_2pl-results.csv`.
+These values are also saved to the file `output/eth_post_2pl-results.csv`.
 
 ```{r save-2pl-results}
 tidy_2pl %>% 
-  write_csv("data-eth/OUT_2pl-results.csv")
+  write_csv("output/eth_post_2pl-results.csv")
 ```
 
 

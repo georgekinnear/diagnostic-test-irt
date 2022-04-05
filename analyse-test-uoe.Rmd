@@ -177,7 +177,9 @@ summary(n) %>% gt()
 
 
 ```{r fa-scree}
+pdf(file = "output/uoe_pre_scree.pdf", width = 6, height = 4)
 fa.parallel(item_scores, fa = "fa")
+dev.off()
 ```
 
 ### 1 Factor
@@ -251,7 +253,7 @@ load3_plot +
     subtitle = "Showing the first 2 factors of the 3-factor model"
   )
 
-ggsave("uoe_3factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
+ggsave("output/uoe_3factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
        plot = load3_plot)
 ```
 
@@ -298,6 +300,8 @@ load3 %>%
 
 > **TODO** - some intro narrative here
 
+<details>
+    <summary>Show data summary</summary>
 ```{r fit-mirt, warning=FALSE, message=FALSE}
 fit_gpcm <- mirt(
   data = item_scores, # just the columns with question scores
@@ -306,7 +310,8 @@ fit_gpcm <- mirt(
   SE = TRUE           # estimate standard errors
   )
 ```
-
+</details>
+    
 > **TODO** There are warnings given here about questions being "re-mapped to ensure all categories have a distance of 1"
 
 ## Local independence
@@ -403,7 +408,7 @@ tidy_gpcm %>%
 
 ```{r save-results}
 tidy_gpcm %>% 
-  write_csv("data-uoe/OUT_gpcm-results-pre-only.csv")
+  write_csv("output/uoe_pre_gpcm-results.csv")
 ```
 
 
@@ -418,7 +423,9 @@ tidy_gpcm %>%
 ### Test information curve
 
 ```{r}
+pdf(file = "output/uoe_pre_info.pdf", width = 6, height = 4)
 plot(fit_gpcm, type = "infoSE", main = "Test information")
+dev.off()
 ```
 
 ### Item information curves
