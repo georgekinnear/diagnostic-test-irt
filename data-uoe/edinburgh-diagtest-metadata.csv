@@ -1,24 +1,24 @@
 pre,post,MATH_group,description
-A1,B1,A,
-A2,,A,
-A3,B2,B,
-A4,B3,A,
-A5,B4,A,
-A6,B5,A,
-A7,B6,B,
-A8,,A,
-A9,B8,A,
-A10,B9,B,
-A11,,A,
-A12,B12,A,
-A13,B13,A,
-A14,B14,B,
-A15,B15,A,
-A16,B16,A,
-A17,B17,A,
-A18,B18,A,
-A19,B19,B,
-A20,B20,B,
-,B7,B,
-,B10,B,
-,B11,C,
+A1,B1,A,properties of fractions
+A2,,A,find intersection of lines
+A3,B2,B,composition of functions
+A4,B3,A,completing the square
+A5,B4,A,trig double angle formula
+A6,B5,A,trig wave function
+A7,B6,B,graphical vector sum
+A8,,A,compute angle between 3d vectors
+A9,B8,A,simplify logs
+A10,B9,B,identify graph of rational functions
+A11,,A,summing arithmetic progression
+A12,B12,A,find point with given slope
+A13,B13,A,equation of tangent
+A14,B14,B,find minimum gradient of cubic
+A15,B15,A,find and classify stationary points of cubic
+A16,B16,A,trig chain rule
+A17,B17,A,chain rule
+A18,B18,A,definite integral
+A19,B19,B,area between curve and x-axis (in 2 parts)
+A20,B20,B,product rule with given values
+,B7,B,angle between 3d vectors (in context)
+,B10,B,2x2 system possibilities
+,B11,C,using max and min functions
