@@ -380,8 +380,66 @@ plot(fit_2pl, type = "infoSE", main = "Test information")
 ### Item information curves
 
 ```{r}
-plot(fit_2pl, type = "infotrace", main = "Item information curves")
+item_info_plots <- plot(fit_2pl, type = "infotrace", main = "Item information curves")
+item_info_plots
 ```
+
+Using the data from these plots, we can compute the sums of different subsets of the information curves, to help evaluate the changes made to the test.
+
+```{r fig.height=3, fig.width=5}
+# Extract the data from the plot, so it can be re-plotted in new ways
+item_info_data <- tibble(item = names(item_info_plots$packet.sizes),
+                         item_data = item_info_plots$panel.args) %>%
+  unnest_wider(item_data) %>%
+  unnest(c(x, y)) %>% 
+  left_join(test_versions %>% select(item = label, outcome), by = "item")
+
+item_info_data %>% 
+  group_by(x) %>% 
+  summarise(
+    #items_all = sum(y),
+    items_pre = sum(ifelse(outcome %in% c("unchanged", "removed"), y, 0)),
+    items_post = sum(ifelse(outcome %in% c("unchanged", "added"), y, 0)),
+    items_added = sum(ifelse(outcome %in% c("added"), y, 0)),
+    items_removed = sum(ifelse(outcome %in% c("removed"), y, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
+  mutate(panel = ifelse(items %in% c("pre", "post"), "overall", "changes") %>% fct_rev()) %>% 
+  mutate(items = fct_relevel(items, "removed", "added", "pre", "post")) %>% 
+  ggplot(aes(x = x, y = y, colour = items)) +
+  geom_line() +
+  scale_colour_brewer(palette = "Paired") +
+  facet_wrap(vars(panel), scales = "free_y") +
+  labs(x = "Ability", y = "Information") +
+  theme_minimal()
+
+ggsave("output/eth_compare_info-curves.pdf", units = "cm", width = 14, height = 6)
+```
+
+This shows that the overall distribution is quite stable between the two versions of the test. The changes have reduced the information, but this was to be expected as the number of items was reduced.
+
+Looking more closely at the information curves for the items that were added and removed, and noting that the number of items in each case is different, we consider instead the mean information per item:
+
+```{r fig.height=3, fig.width=4}
+item_info_data %>% 
+  group_by(x) %>% 
+  summarise(
+    n_added = sum(ifelse(outcome %in% c("added"), 1, 0)),
+    items_added = sum(ifelse(outcome %in% c("added"), y, 0)) / n_added,
+    items_removed = sum(ifelse(outcome %in% c("removed"), y, 0)) / sum(ifelse(outcome %in% c("removed"), 1, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
+  mutate(items = fct_relevel(items, "removed", "added")) %>% 
+  ggplot(aes(x = x, y = y, colour = items)) +
+  geom_line() +
+  scale_colour_brewer(palette = "Paired") +
+  labs(x = "Ability", y = "Mean information per item") +
+  theme_minimal()
+
+ggsave("output/eth_compare_mean-item-info.pdf", units = "cm", width = 10, height = 6)
+```
+
+This shows that the questions that added questions offer, on average, slightly more information than the questions they replaced (however there are fewer of them, hence lower total information as shown above). The difference is largest in the ability range 0-2.
 
 ## Total information
 
