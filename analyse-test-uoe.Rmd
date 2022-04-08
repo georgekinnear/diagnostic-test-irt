@@ -300,11 +300,18 @@ load3 %>%
 
 > **TODO** - some intro narrative here
 
+
+```{r}
+source("common-functions.R")
+item_scores_rescaled <- recategorise_marks(data = item_scores, 
+                                        MAX_MARKS = rep(5, 20))
+```
+
 <details>
     <summary>Show data summary</summary>
 ```{r fit-mirt, warning=FALSE, message=FALSE}
 fit_gpcm <- mirt(
-  data = item_scores, # just the columns with question scores
+  data = item_scores_rescaled$data_recat, # just the columns with question scores
   model = 1,          # number of factors to extract
   itemtype = "gpcm",  # generalised partial credit model
   SE = TRUE           # estimate standard errors
@@ -344,14 +351,14 @@ Given that this violation of the local independence assumption is very mild, we 
 
 ## Model parameters
 
-We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default. We specify it explicitly below, but the results would have been the same if we omitted specifying the method argument since it's the default method the function uses.
+We augment the data with estimated abilities for each student, using mirt's `fscores()` function.
 
 ```{r augment-with-f1}
 test_scores_with_ability <- test_scores %>%
   mutate(F1 = fscores(fit_gpcm, method = "EAP"))
 ```
 
-We can also calculate the model coefficient estimates using a generic function `coef()` which is used to extract model coefficients from objects returned by modeling functions. We will set the `IRTpars` argument to `TRUE`, which means slope intercept parameters will be converted into traditional IRT parameters.
+Next, we extract the IRT parameters.
 
 ```{r extract-coefs}
 coefs_gpcm <- coef(fit_gpcm, IRTpars = TRUE)
@@ -431,8 +438,62 @@ dev.off()
 ### Item information curves
 
 ```{r}
-plot(fit_gpcm, type = "infotrace", main = "Item information curves")
+item_info_plots <- plot(fit_gpcm, type = "infotrace", main = "Item information curves")
+item_info_plots
 ```
+
+Using the data from these plots, we can compute the sums of different subsets of the information curves -- here, we will look at the questions based on their MATH group:
+
+```{r fig.height=3, fig.width=4}
+# Extract the data from the plot, so it can be re-plotted in new ways
+item_info_data <- tibble(item = names(item_info_plots$packet.sizes),
+                         item_data = item_info_plots$panel.args) %>%
+  unnest_wider(item_data) %>%
+  unnest(c(x, y)) %>% 
+  left_join(item_info %>% select(item = question, MATH_group), by = "item")
+
+item_info_data %>% 
+  group_by(x) %>% 
+  summarise(
+    items_all = sum(y),
+    items_A = sum(ifelse(MATH_group == "A", y, 0)),
+    items_B = sum(ifelse(MATH_group == "B", y, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
+  mutate(items = fct_relevel(items, "all", "A", "B")) %>% 
+  ggplot(aes(x = x, y = y, colour = items)) +
+  geom_line() +
+  scale_colour_manual(values = c("all" = "#000000", MATH_colours)) +
+  labs(x = "Ability", y = "Information") +
+  theme_minimal()
+
+ggsave("output/uoe_pre_info-curves_A-vs-B.pdf", units = "cm", width = 14, height = 6)
+```
+
+This shows that the information in the MATH Group B questions is at a higher point on the ability scale than for the MATH Group A questions.
+
+Since the number of items in each case is different, we consider instead the mean information per item:
+
+```{r fig.height=3, fig.width=4}
+item_info_data %>% 
+  group_by(x) %>% 
+  summarise(
+    items_all = sum(y) / n(),
+    items_A = sum(ifelse(MATH_group == "A", y, 0)) / sum(ifelse(MATH_group == "A", 1, 0)),
+    items_B = sum(ifelse(MATH_group == "B", y, 0)) / sum(ifelse(MATH_group == "B", 1, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
+  mutate(items = fct_relevel(items, "all", "A", "B")) %>% 
+  ggplot(aes(x = x, y = y, colour = items)) +
+  geom_line() +
+  scale_colour_manual(values = c("all" = "#000000", MATH_colours)) +
+  labs(x = "Ability", y = "Mean information per item") +
+  theme_minimal()
+
+ggsave("output/uoe_pre_info-curves_A-vs-B-avg.pdf", units = "cm", width = 10, height = 6)
+```
+
+This shows that items of each MATH group are giving broadly similar levels of information on average, but at different points on the ability scale.
 
 ## Total information
 
@@ -445,7 +506,113 @@ info_gpcm %>% gt()
 
 This shows that the total information in all items is `r info_gpcm$TotalInfo`.
 
+### Information by item
+
+```{r}
+tidy_info <- item_info %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(fit_gpcm,
+               c(-4, 4),
+               which.items = .x) %>% pull(TotalInfo)
+  ))
+
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
+```
+
+
 ## Response curves
+
+> **TODO** integrate the code from Simon Taylor
+
+```{r}
+theta <- seq(-6, 6, by=0.05)
+
+my_information_plot(fit_gpcm, theta, item_scores_rescaled)
+
+item <- extract.item(fit_gpcm, 2)
+traceline <- probtrace(item, theta)
+# Note that items that have only 2 levels (i.e. 0 marks or full marks), the columns are P.0 and P.1, while other items are indexed from 1, i.e. P.1, P.2, ...
+# https://github.com/philchalmers/mirt/blob/accd2383b9a4d17a4cab269717ce98434900b62c/R/probtrace.R#L57
+
+level_values <- item_scores_rescaled$MARK_CATEGORIES %>%
+  enframe() %>%
+  unnest(c(value)) %>% 
+  group_by(name) %>% 
+  mutate(level = row_number()) %>% 
+  mutate(level2 = case_when(
+    max(level) == 2 ~ level - 1,
+    TRUE ~ level * 1.0
+  )) %>% 
+  mutate(levelname = paste0(name, ".P.", level2))
+
+trace_data <- probtrace(fit_gpcm, theta) %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "level", values_to = "y") %>% 
+  left_join(level_values %>% select(item = name, level = levelname, score = value), by = "level") %>% 
+  mutate(score = as.factor(score))
+
+trace_data %>% 
+  mutate(item = fct_reorder(item, parse_number(item))) %>% 
+  ggplot(aes(x = theta, y = y, colour = score)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  theme_minimal()
+
+expected_scores <- trace_data %>% 
+  mutate(item = fct_reorder(item, parse_number(item))) %>% 
+  group_by(item, theta) %>% 
+  mutate(expected_score = sum(as.double(as.character(score)) * y))
+
+expected_scores %>% 
+  ggplot(aes(x = theta, y = expected_score, colour = score)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  theme_minimal()
+
+expected_scores %>% 
+  ggplot(aes(x = theta, y = expected_score, colour = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  theme_minimal()
+
+
+
+traceline %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = starts_with("P."), names_to = "level", values_to = "y")
+  
+colnames(probtrace(fit_gpcm, theta)) %>% as_tibble()
+
+my_item_probtheta_plot(object = fit_gpcm, Theta = theta, 
+    data = item_scores_rescaled, item = 1, cumulative = FALSE)
+
+my_expectedscore_plot(object = fit_gpcm, Theta = theta, 
+      data = item_scores_rescaled, item = 16)
+
+```
 
 
 ### Test response curves
@@ -453,6 +620,8 @@ This shows that the total information in all items is `r info_gpcm$TotalInfo`.
 ```{r}
 plot(fit_gpcm, type = "score", auto.key = FALSE)
 ```
+
+> **TODO** This is incorrect because it does not account for the true partial marks
 
 ### Item response curves
 

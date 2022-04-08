@@ -16,3 +16,27 @@ tidy_mirt_coefs <- function(x){
     # turn into a wider data frame
     pivot_wider(names_from = var, values_from = value)
 }
+
+# Given a table of results (columns are items and rows are students) that may include partial marks for items,
+# rescore the items to be consecutive integers
+recategorise_marks <- function(data, MAX_MARKS = NULL){
+  MARK_CATEGORIES <- lapply(apply(data, 2, unique), sort)
+  MAX <- unlist(lapply(MARK_CATEGORIES,max))
+  if(is.null(MAX_MARKS)){
+    MAX_MARKS <- MAX
+  }else{
+    if(any(MAX_MARKS < MAX))
+      stop("There is a mark that is greater than the specified max.")
+  }
+  data_recat <- data
+  for(item in 1:ncol(data)){
+    for(subj in 1:nrow(data)){
+      if(is.na(data[subj,item])) {
+        data_recat[subj,item] <- NA
+      } else {
+        data_recat[subj,item] <- which(MARK_CATEGORIES[[item]] %in% data[subj,item])
+      }
+    }
+  }
+  return(list(data_recat = data_recat, MARK_CATEGORIES = MARK_CATEGORIES, MAX_MARKS = MAX_MARKS))
+}
