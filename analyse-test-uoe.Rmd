@@ -21,6 +21,7 @@ library(vroom)     # For reading in many files at once
 library(broom)     # For tidying model output
 library(fs)        # For file system operations
 library(gt)        # For formatting tables
+library(kableExtra)# For formatting tables
 library(knitr)     # For markdown tables
 library(ggrepel)   # For labelling points without overlap
 library(skimr)     # For data frame level summary
@@ -58,13 +59,13 @@ test_scores <- vroom("data-uoe/ANON_DiagTest13to16.csv") %>%
   rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "A"))
 ```
 
+<details>
+    <summary>Show data summary</summary>
 ```{r data-peek}
 test_scores %>% skim()
 ```
+</details>
 
-## Cleaning
-
-> **TODO** - filter out "nonserious" attempts
 
 
 ## Data summary
@@ -268,12 +269,12 @@ main_factors <- load3 %>%
   ungroup() %>% 
   transmute(main_factor = factor, variable)
 
-library(kableExtra)
+
 load3 %>% 
   select(-uniqueness) %>% 
   # add the info about which is the main factor
-  left_join(main_factors) %>%
-  left_join(item_info %>% select(variable = question, description, MATH_group)) %>% 
+  left_join(main_factors, by = "variable") %>%
+  left_join(item_info %>% select(variable = question, description, MATH_group), by = "variable") %>% 
   arrange(main_factor) %>% 
   select(main_factor, everything()) %>% 
   # arrange adjectives by descending loading on main factor
@@ -294,32 +295,59 @@ load3 %>%
   kableExtra::kable_styling(latex_options = c("repeat_header"))
 ```
 
-> **TODO** George to comment
+The first factor is dominated by routine tasks that require students to carry out a standard procedure (e.g. symbolic differentiation, computing stationary points, etc), almost entirely based on calculus skills (the only exception being A8 on vectors).
+
+The second factor includes all the questions that had previously been identified as MATH Group B, i.e. those that are somehow "non-standard" -- either requiring students to recognise that a particular rule/procedure is applicable before applying it, or to apply it in an unusual way.
+
+The third factor consists of routine (MATH Group A) tasks, on "pre-calculus" topics such as fractions, logarithms and trigonometry.
+
 
 # 3. Fitting IRT model
 
-> **TODO** - some intro narrative here
-
+The `mirt` implementation of the graded partial credit model (`gpmc`) requires that the partial marks are consecutive integers. We therefore need to work around this by adjusting our scores into that form (e.g. replacing scores of 0, 2.5, 5 with 1, 2, 3), while keeping track of the true scores attached to each mark level so that we can properly compute expected scores later on.
 
 ```{r}
-source("common-functions.R")
-item_scores_rescaled <- recategorise_marks(data = item_scores, 
-                                        MAX_MARKS = rep(5, 20))
+# Determine the mark levels for each item
+mark_levels <- item_scores %>% 
+  pivot_longer(everything(), names_to = "item", values_to = "score") %>% 
+  distinct() %>% 
+  arrange(parse_number(item), score) %>% 
+  group_by(item) %>%
+  mutate(order = row_number()) %>% 
+# Note that the convention used by mirt is for items that have only 2 levels (i.e. 0 marks or full marks),
+# the columns are P.0 and P.1, while other items are indexed from 1, i.e. P.1, P.2, ...
+# https://github.com/philchalmers/mirt/blob/accd2383b9a4d17a4cab269717ce98434900b62c/R/probtrace.R#L57
+  mutate(level = case_when(
+    max(order) == 2 ~ order - 1,
+    TRUE ~ order * 1.0
+  )) %>% 
+  mutate(levelname = paste0(item, ".P.", level))
+
+# Use the mark_levels table to replace scores with levels
+# (first pivot the data to long form, make the replacement, then pivot back to wide again)
+item_scores_levelled <- item_scores %>% 
+  # temporarily add row identifiers
+  mutate(row = row_number()) %>% 
+  pivot_longer(cols = -row, names_to = "item", values_to = "score") %>% 
+  left_join(mark_levels %>% select(item, score, level), by = c("item", "score")) %>% 
+  select(-score) %>% 
+  pivot_wider(names_from = "item", values_from = "level") %>% 
+  select(-row)
 ```
 
+
 <details>
-    <summary>Show data summary</summary>
+    <summary>Show model fitting output</summary>
 ```{r fit-mirt, warning=FALSE, message=FALSE}
 fit_gpcm <- mirt(
-  data = item_scores_rescaled$data_recat, # just the columns with question scores
+  data = item_scores_levelled, # just the columns with question scores
   model = 1,          # number of factors to extract
   itemtype = "gpcm",  # generalised partial credit model
   SE = TRUE           # estimate standard errors
   )
 ```
 </details>
-    
-> **TODO** There are warnings given here about questions being "re-mapped to ensure all categories have a distance of 1"
+
 
 ## Local independence
 
@@ -419,49 +447,64 @@ tidy_gpcm %>%
 ```
 
 
-
-> TODO - fix from here onward!
-
-
-
 ## Information curves
 
+```{r}
+theta <- seq(-6, 6, by=0.05)
+
+info_matrix <- testinfo(fit_gpcm, theta, individual = TRUE)
+colnames(info_matrix) <- item_info %>% pull(question)
+item_info_data <- info_matrix %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "item", values_to = "info_y") %>% 
+  left_join(item_info %>% select(item = question, MATH_group), by = "item") %>% 
+  mutate(item = fct_reorder(item, parse_number(item)))
+```
 
 ### Test information curve
 
 ```{r}
-pdf(file = "output/uoe_pre_info.pdf", width = 6, height = 4)
-plot(fit_gpcm, type = "infoSE", main = "Test information")
-dev.off()
+item_info_data %>% 
+  group_by(theta) %>% 
+  summarise(info_y = sum(info_y)) %>% 
+  ggplot(aes(x = theta, y = info_y)) +
+  geom_line() +
+  labs(y = "Information") +
+  theme_minimal()
+
+ggsave("output/uoe_pre_info.pdf", width = 6, height = 4, units = "in")
 ```
+
+This shows that the information given by the test is skewed toward the lower end of the ability scale - i.e. it can give more accurate estimates of students' ability where their ability level is slightly below the mean.
 
 ### Item information curves
 
+Breaking this down by question helps to highlight those questions that are most/least informative:
+
 ```{r}
-item_info_plots <- plot(fit_gpcm, type = "infotrace", main = "Item information curves")
-item_info_plots
+item_info_data %>% 
+  ggplot(aes(x = theta, y = info_y, colour = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Information") +
+  theme_minimal()
 ```
 
-Using the data from these plots, we can compute the sums of different subsets of the information curves -- here, we will look at the questions based on their MATH group:
+We can also compute the sums of different subsets of the information curves -- here, we will look at the questions based on their MATH group:
 
 ```{r fig.height=3, fig.width=4}
-# Extract the data from the plot, so it can be re-plotted in new ways
-item_info_data <- tibble(item = names(item_info_plots$packet.sizes),
-                         item_data = item_info_plots$panel.args) %>%
-  unnest_wider(item_data) %>%
-  unnest(c(x, y)) %>% 
-  left_join(item_info %>% select(item = question, MATH_group), by = "item")
-
 item_info_data %>% 
-  group_by(x) %>% 
+  group_by(theta) %>% 
   summarise(
-    items_all = sum(y),
-    items_A = sum(ifelse(MATH_group == "A", y, 0)),
-    items_B = sum(ifelse(MATH_group == "B", y, 0))
+    items_all = sum(info_y),
+    items_A = sum(ifelse(MATH_group == "A", info_y, 0)),
+    items_B = sum(ifelse(MATH_group == "B", info_y, 0))
   ) %>% 
-  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y") %>% 
   mutate(items = fct_relevel(items, "all", "A", "B")) %>% 
-  ggplot(aes(x = x, y = y, colour = items)) +
+  ggplot(aes(x = theta, y = info_y, colour = items)) +
   geom_line() +
   scale_colour_manual(values = c("all" = "#000000", MATH_colours)) +
   labs(x = "Ability", y = "Information") +
@@ -476,15 +519,15 @@ Since the number of items in each case is different, we consider instead the mea
 
 ```{r fig.height=3, fig.width=4}
 item_info_data %>% 
-  group_by(x) %>% 
+  group_by(theta) %>% 
   summarise(
-    items_all = sum(y) / n(),
-    items_A = sum(ifelse(MATH_group == "A", y, 0)) / sum(ifelse(MATH_group == "A", 1, 0)),
-    items_B = sum(ifelse(MATH_group == "B", y, 0)) / sum(ifelse(MATH_group == "B", 1, 0))
+    items_all = sum(info_y) / n(),
+    items_A = sum(ifelse(MATH_group == "A", info_y, 0)) / sum(ifelse(MATH_group == "A", 1, 0)),
+    items_B = sum(ifelse(MATH_group == "B", info_y, 0)) / sum(ifelse(MATH_group == "B", 1, 0))
   ) %>% 
-  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y") %>% 
   mutate(items = fct_relevel(items, "all", "A", "B")) %>% 
-  ggplot(aes(x = x, y = y, colour = items)) +
+  ggplot(aes(x = theta, y = info_y, colour = items)) +
   geom_line() +
   scale_colour_manual(values = c("all" = "#000000", MATH_colours)) +
   labs(x = "Ability", y = "Mean information per item") +
@@ -538,37 +581,47 @@ tidy_info %>%
   )
 ```
 
-
-## Response curves
-
-> **TODO** integrate the code from Simon Taylor
+Restricting instead to the range $-2\leq\theta\leq2$:
 
 ```{r}
-theta <- seq(-6, 6, by=0.05)
+tidy_info <- item_info %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(fit_gpcm,
+               c(-2, 2),
+               which.items = .x) %>% pull(Info)
+  ))
 
-my_information_plot(fit_gpcm, theta, item_scores_rescaled)
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
+```
+## Response curves
 
-item <- extract.item(fit_gpcm, 2)
-traceline <- probtrace(item, theta)
-# Note that items that have only 2 levels (i.e. 0 marks or full marks), the columns are P.0 and P.1, while other items are indexed from 1, i.e. P.1, P.2, ...
-# https://github.com/philchalmers/mirt/blob/accd2383b9a4d17a4cab269717ce98434900b62c/R/probtrace.R#L57
+Since the `gpcm` model is more complicated, there is a characteristic curve for each possible score on the question:
 
-level_values <- item_scores_rescaled$MARK_CATEGORIES %>%
-  enframe() %>%
-  unnest(c(value)) %>% 
-  group_by(name) %>% 
-  mutate(level = row_number()) %>% 
-  mutate(level2 = case_when(
-    max(level) == 2 ~ level - 1,
-    TRUE ~ level * 1.0
-  )) %>% 
-  mutate(levelname = paste0(name, ".P.", level2))
-
+```{r}
 trace_data <- probtrace(fit_gpcm, theta) %>% 
   as_tibble() %>% 
   bind_cols(theta = theta) %>% 
   pivot_longer(cols = -theta, names_to = "level", values_to = "y") %>% 
-  left_join(level_values %>% select(item = name, level = levelname, score = value), by = "level") %>% 
+  left_join(mark_levels %>% select(item, level = levelname, score), by = "level") %>% 
   mutate(score = as.factor(score))
 
 trace_data %>% 
@@ -577,112 +630,59 @@ trace_data %>%
   geom_line() +
   scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
   facet_wrap(vars(item)) +
+  labs(y = "Probability of response") +
   theme_minimal()
+```
 
+To get a simplified picture for each question, we compute the expected score at each ability level:
+
+```{r}
 expected_scores <- trace_data %>% 
   mutate(item = fct_reorder(item, parse_number(item))) %>% 
   group_by(item, theta) %>% 
-  mutate(expected_score = sum(as.double(as.character(score)) * y))
-
-expected_scores %>% 
-  ggplot(aes(x = theta, y = expected_score, colour = score)) +
-  geom_line() +
-  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
-  facet_wrap(vars(item)) +
-  theme_minimal()
+  summarise(expected_score = sum(as.double(as.character(score)) * y), .groups = "drop")
 
 expected_scores %>% 
   ggplot(aes(x = theta, y = expected_score, colour = item)) +
   geom_line() +
   scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Expected score") +
+  theme_minimal()
+```
+
+The resulting curves look quite similar to those from the 2PL, allowing for some similar interpretation. For instance, superimposing all the curves shows that there is a spread of difficulties (i.e. thetas where the expected score is 2.5/5) and that some questions are more discriminating than others (i.e. steeper slopes):
+
+```{r}
+plt <- expected_scores %>% 
+  ggplot(aes(x = theta, y = expected_score, colour = item, text = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  labs(y = "Expected score") +
   theme_minimal()
 
+ggplotly(plt, tooltip = "text")
 
-
-traceline %>% 
-  as_tibble() %>% 
-  bind_cols(theta = theta) %>% 
-  pivot_longer(cols = starts_with("P."), names_to = "level", values_to = "y")
-  
-colnames(probtrace(fit_gpcm, theta)) %>% as_tibble()
-
-my_item_probtheta_plot(object = fit_gpcm, Theta = theta, 
-    data = item_scores_rescaled, item = 1, cumulative = FALSE)
-
-my_expectedscore_plot(object = fit_gpcm, Theta = theta, 
-      data = item_scores_rescaled, item = 16)
-
+ggsave(plot = plt, file = "output/uoe_pre_iccs-superimposed.pdf", width = 20, height = 14, units = "cm")
 ```
 
 
-### Test response curves
+### Test response curve
 
 ```{r}
-plot(fit_gpcm, type = "score", auto.key = FALSE)
+total_expected_score <- expected_scores %>% 
+  group_by(theta) %>% 
+  summarise(expected_score = sum(expected_score))
+
+total_expected_score %>% 
+  ggplot(aes(x = theta, y = expected_score)) +
+  geom_line() +
+  # geom_point(data = total_expected_score %>% filter(theta == 0)) +
+  # ggrepel::geom_label_repel(data = total_expected_score %>% filter(theta == 0), aes(label = round(expected_score, 1)), box.padding = 0.5) +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  labs(y = "Expected score") +
+  theme_minimal()
 ```
-
-> **TODO** This is incorrect because it does not account for the true partial marks
-
-### Item response curves
-
-We can get individual item surface and information plots using the `itemplot()` function from the **mirt** package, e.g.
-
-```{r}
-mirt::itemplot(fit_gpcm, item = 1, 
-               main = "Trace lines for item 1")
-```
-
-We can also get the plots for all trace lines, one facet per plot.
-
-```{r}
-plot(fit_gpcm, type = "trace", auto.key = FALSE)
-```
-
-Or all of them overlaid in one plot.
-
-```{r}
-plot(fit_gpcm, type = "trace", facet_items=FALSE)
-```
-
-An alternative approach is using ggplot2 and plotly to add interactivity to make it easier to identify items.
-
-```{r eval=FALSE, warning=FALSE, include=FALSE}
-# store the object
-plt <- plot(fit_gpcm, type = "trace", facet_items = FALSE)
-# the data we need is in panel.args
-# TODO - I had to change the [[1]] to [[2]] since the plt has two panels for some reason, with the one we want being the 2nd panel
-plt_data <- tibble(
-  x          = plt$panel.args[[2]]$x,
-  y          = plt$panel.args[[2]]$y,
-  subscripts = plt$panel.args[[2]]$subscripts,
-  item       = rep(colnames(item_scores), each = 200)
-) %>%
-  mutate(
-    item_no = str_remove(item, "A") %>% as.numeric(),
-    item    = fct_reorder(item, item_no)
-    )
-
-head(plt_data)
-
-plt_gg <- ggplot(plt_data, aes(x, y, 
-                          colour = item, 
-                          text = item)) + 
-  geom_line() + 
-  labs(
-    title = "2PL - Trace lines",
-    #x = expression(theta),
-    x = "theta",
-    #y = expression(P(theta)),
-    y = "P(theta)",
-    colour = "Item"
-  ) +
-  theme_minimal() +
-  theme(legend.position = "none")
-
-ggplotly(plt_gg, tooltip = "text")
-```
-
-
 
 
 ## Packages
