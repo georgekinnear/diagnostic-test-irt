@@ -57,6 +57,8 @@ test_scores <- vroom("data-uoe/ANON_DiagTest13to16.csv") %>%
   filter(!is.na(Total)) %>% 
   mutate(year = "13-16") %>% 
   rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "A"))
+
+test_scores_unfiltered <- test_scores
 ```
 
 <details>
@@ -66,6 +68,44 @@ test_scores %>% skim()
 ```
 </details>
 
+
+## Data cleaning
+
+1. For students who took the test more than once, consider the attempt with the highest scores only and remove the others;
+
+2. Eliminate the students who scored three or more zeros in the 5 easiest questions in the
+second-half of the test; and
+
+3. Add the students scoring more than 30 marks in total back to the sample.
+
+```{r}
+test_scores <- test_scores_unfiltered %>% 
+  group_by(AnonID) %>% 
+  slice_max(Total, n = 1) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(zeros_in_easiest_5 = sum(A11==0, A12==0, A13==0, A16==0, A17==0)) %>% 
+  filter(zeros_in_easiest_5 <= 2 | Total >= 30) %>% 
+  select(-zeros_in_easiest_5) %>% 
+  ungroup()
+
+# test_scores <- test_scores_unfiltered %>%
+#   group_by(AnonID) %>%
+#   slice_max(Total, n = 1) %>%
+#   ungroup() %>%
+#   filter(Total > 0)
+
+bind_rows(
+  "unfiltered" = test_scores_unfiltered %>% select(Total),
+  "filtered" = test_scores %>% select(Total),
+  .id = "dataset"
+) %>% 
+  mutate(dataset = fct_relevel(dataset, "unfiltered", "filtered")) %>% 
+  ggplot(aes(x = Total)) +
+  geom_histogram() +
+  facet_wrap(vars(dataset)) +
+  theme_minimal()
+```
 
 
 ## Data summary
@@ -114,6 +154,8 @@ test_scores %>%
     colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
   )
 ```
+
+
 
 # 2. Testing assumptions
 
@@ -178,6 +220,9 @@ summary(n) %>% gt()
 
 
 ```{r fa-scree}
+fa.parallel(item_scores, fa = "fa")
+```
+```{r include=FALSE}
 pdf(file = "output/uoe_pre_scree.pdf", width = 6, height = 4)
 fa.parallel(item_scores, fa = "fa")
 dev.off()
@@ -197,13 +242,18 @@ print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load <- tidy(fitfact)
 
-ggplot(load, aes(x = fl1, y = 0)) + 
-  geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
-  labs(x = "Factor 1", y = NULL,
-       title = "Standardised Loadings", 
-       subtitle = "Based upon correlation matrix") +
-  theme_minimal()
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(item_info, by = "question") %>% 
+  ggplot(aes(x = factor_loading, y = 0, colour = MATH_group)) + 
+    geom_point() + 
+    geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+    scale_colour_manual(values = MATH_colours) +
+  scale_y_discrete() +
+    labs(x = "Factor 1", y = NULL,
+         title = "Standardised Loadings", 
+         subtitle = "Based upon correlation matrix") +
+    theme_minimal()
 ```
 
 ```{r}
@@ -222,44 +272,44 @@ load %>%
   )
 ```
 
-> **TODO** George to add comments here
+It is striking here that the MATH Group B questions are those that load most strongly onto this factor.
 
 
-### 3 Factor
+### 4 Factor
 
-Here we also investigate the 3-factor solution, to see whether these factors are interpretable.
+Here we also investigate the 4-factor solution, to see whether these factors are interpretable.
 
-```{r fa3}
-fitfact3 <- factanal(item_scores, factors = 3, rotation = "varimax")
-print(fitfact3, digits = 2, cutoff = 0.3, sort = TRUE)
+```{r fa-alt}
+fitfact2 <- factanal(item_scores, factors = 2, rotation = "varimax")
+print(fitfact2, digits = 2, cutoff = 0.3, sort = TRUE)
 
-load3 <- tidy(fitfact3)
+load2 <- tidy(fitfact2)
 
-load3_plot <- load3 %>%
+load2_plot <- load2 %>%
   left_join(item_info, by = c("variable"= "question")) %>%
   ggplot(aes(x = fl1, y = fl2, colour = MATH_group, shape = MATH_group)) +
   geom_point() +
-  geom_text_repel(aes(label = paste0("A", rownames(load3))), show.legend = FALSE, alpha = 0.6) +
+  geom_text_repel(aes(label = paste0("A", rownames(load2))), show.legend = FALSE, alpha = 0.6) +
   labs(
-    x = "Factor 1 (of 3)",
-    y = "Factor 2 (of 3)"
+    x = "Factor 1 (of 4)",
+    y = "Factor 2 (of 4)"
   ) +
   scale_colour_manual("MATH group", values = MATH_colours) +
   scale_shape_manual(name = "MATH group", values = c(19, 17)) +
   theme_minimal()
 
-load3_plot +
+load2_plot +
   labs(
     title = "Standardised Loadings",
-    subtitle = "Showing the first 2 factors of the 3-factor model"
+    subtitle = "Showing the first 2 factors of the 4-factor model"
   )
 
-ggsave("output/uoe_3factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
-       plot = load3_plot)
+ggsave("output/uoe_4factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
+       plot = load2_plot)
 ```
 
 ```{r}
-main_factors <- load3 %>% 
+main_factors <- load2 %>% 
 #  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
   pivot_longer(names_to = "factor",
                cols = contains("fl")) %>% 
@@ -270,7 +320,7 @@ main_factors <- load3 %>%
   transmute(main_factor = factor, variable)
 
 
-load3 %>% 
+load2 %>% 
   select(-uniqueness) %>% 
   # add the info about which is the main factor
   left_join(main_factors, by = "variable") %>%
@@ -284,7 +334,7 @@ load3 %>%
   arrange(-max_loading, .by_group = TRUE) %>% 
   select(-max_loading) %>% 
   # sort out the presentation
-  rename("Main Factor" = main_factor, # the _ throws a latex error
+  rename("Main Factor" = main_factor,
          "Question" = variable) %>%
   mutate_at(
     vars(starts_with("fl")),
@@ -295,11 +345,13 @@ load3 %>%
   kableExtra::kable_styling(latex_options = c("repeat_header"))
 ```
 
-The first factor is dominated by routine tasks that require students to carry out a standard procedure (e.g. symbolic differentiation, computing stationary points, etc), almost entirely based on calculus skills (the only exception being A8 on vectors).
+The first factor is dominated by questions that had previously been identified as MATH Group B, i.e. those that are somehow "non-standard" -- either requiring students to recognise that a particular rule/procedure is applicable before applying it, or to apply it in an unusual way. This factor also includes Group A questions on "pre-calculus" topics (such as fractions, logarithms and trigonometry) that students had perhaps not explicitly practiced most recently.
 
-The second factor includes all the questions that had previously been identified as MATH Group B, i.e. those that are somehow "non-standard" -- either requiring students to recognise that a particular rule/procedure is applicable before applying it, or to apply it in an unusual way.
+The second factor is dominated by the two chain rule questions (A16 and A17), along with A18 which is a routine definite integral, suggesting this factor is related to routine calculus computations.
 
-The third factor consists of routine (MATH Group A) tasks, on "pre-calculus" topics such as fractions, logarithms and trigonometry.
+The third factor seems to be based on applying calculus techniques to cubic and quadratic curves, e.g. to find tangent lines or stationary points.
+
+The fourth factor is dominated by the only two questions that require the use of a calculator (to compute trigonometric functions), but more generally seems to be based on non-calculus skills (vectors, trig, sequences).
 
 
 # 3. Fitting IRT model
