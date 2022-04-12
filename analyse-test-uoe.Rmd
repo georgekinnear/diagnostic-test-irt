@@ -53,10 +53,18 @@ Load the student scores for the test:
 
 ```{r load-all-data, echo=FALSE, message=FALSE}
 # TODO - this file has multiple years, with no indication of which year each attempt comes from; it would be good to add that info
-test_scores <- vroom("data-uoe/ANON_DiagTest13to16.csv") %>% 
-  filter(!is.na(Total)) %>% 
-  mutate(year = "13-16") %>% 
-  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "A"))
+test_scores <-
+  vroom(
+    fs::dir_ls(path = "data-uoe", glob = "*diagtest_detail*"),
+    # Moodle records "-" as the result for questions that were not attempted,
+    # so we set vroom's na option to interpret this as NA
+    na = c("-", "", "NA"), 
+    id = "cohort" 
+  ) %>%
+  mutate(year = str_remove(cohort, "data-uoe/ANON_") %>% str_remove(., "diagtest_detail.csv"))%>% 
+  filter(!is.na(Total)) %>%
+  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "A")) %>% 
+  select(year, AnonID, Total, starts_with("A"))
 
 test_scores_unfiltered <- test_scores
 ```
@@ -70,6 +78,8 @@ test_scores %>% skim()
 
 
 ## Data cleaning
+
+Included in the data are many abandoned attempts, where students have apparently not engaged with most questions (e.g. after the first few on the test). Unfortunately the data only includes a score for each item, and not whether it was actually answered, so to try to remove these "non-serious" attempts, we use a process of eliminating based on scores in the latter half of the test:
 
 1. For students who took the test more than once, consider the attempt with the highest scores only and remove the others;
 
@@ -89,18 +99,16 @@ test_scores <- test_scores_unfiltered %>%
   select(-zeros_in_easiest_5) %>% 
   ungroup()
 
-# test_scores <- test_scores_unfiltered %>%
-#   group_by(AnonID) %>%
-#   slice_max(Total, n = 1) %>%
-#   ungroup() %>%
-#   filter(Total > 0)
-
 bind_rows(
   "unfiltered" = test_scores_unfiltered %>% select(Total),
   "filtered" = test_scores %>% select(Total),
   .id = "dataset"
 ) %>% 
-  mutate(dataset = fct_relevel(dataset, "unfiltered", "filtered")) %>% 
+  group_by(dataset) %>% 
+  # add n's to the facet titles
+  mutate(dataset = str_glue("{dataset} (n={n()})") %>% as_factor()) %>% 
+  # flip them so that filtered appears on the right
+  mutate(dataset = fct_rev(dataset)) %>% 
   ggplot(aes(x = Total)) +
   geom_histogram() +
   facet_wrap(vars(dataset)) +
@@ -114,6 +122,7 @@ The number of responses from each class:
 
 ```{r skim-classes}
 test_scores %>% 
+  group_by(year) %>% 
   tally() %>% 
   gt() %>% 
   data_color(
@@ -126,7 +135,7 @@ Mean and standard deviation for each item:
 
 ```{r skim-all-data}
 test_scores %>% 
-  select(-Start, -End, -Duration, -AnonID, -Total) %>% 
+  select(-AnonID, -Total) %>% 
   group_by(year) %>% 
   skim_without_charts() %>% 
   select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
@@ -247,12 +256,12 @@ load %>%
   left_join(item_info, by = "question") %>% 
   ggplot(aes(x = factor_loading, y = 0, colour = MATH_group)) + 
     geom_point() + 
-    geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
-    scale_colour_manual(values = MATH_colours) +
+    geom_label_repel(aes(label = question), show.legend = FALSE) +
+    scale_colour_manual("MATH group", values = MATH_colours) +
   scale_y_discrete() +
     labs(x = "Factor 1", y = NULL,
          title = "Standardised Loadings", 
-         subtitle = "Based upon correlation matrix") +
+         subtitle = "Based on 1-factor solution") +
     theme_minimal()
 ```
 
@@ -280,21 +289,22 @@ It is striking here that the MATH Group B questions are those that load most str
 Here we also investigate the 4-factor solution, to see whether these factors are interpretable.
 
 ```{r fa-alt}
-fitfact2 <- factanal(item_scores, factors = 2, rotation = "varimax")
+fitfact2 <- factanal(item_scores, factors = 4, rotation = "varimax")
 print(fitfact2, digits = 2, cutoff = 0.3, sort = TRUE)
 
 load2 <- tidy(fitfact2)
 
 load2_plot <- load2 %>%
-  left_join(item_info, by = c("variable"= "question")) %>%
+  rename(question = variable) %>% 
+  left_join(item_info, by = "question") %>%
   ggplot(aes(x = fl1, y = fl2, colour = MATH_group, shape = MATH_group)) +
   geom_point() +
-  geom_text_repel(aes(label = paste0("A", rownames(load2))), show.legend = FALSE, alpha = 0.6) +
+  geom_text_repel(aes(label = question), show.legend = FALSE, alpha = 0.6) +
   labs(
     x = "Factor 1 (of 4)",
     y = "Factor 2 (of 4)"
   ) +
-  scale_colour_manual("MATH group", values = MATH_colours) +
+  scale_colour_manual("MATH group", values = MATH_colours[1:2]) +
   scale_shape_manual(name = "MATH group", values = c(19, 17)) +
   theme_minimal()
 
@@ -716,6 +726,34 @@ plt <- expected_scores %>%
 ggplotly(plt, tooltip = "text")
 
 ggsave(plot = plt, file = "output/uoe_pre_iccs-superimposed.pdf", width = 20, height = 14, units = "cm")
+```
+
+```{r}
+highlight_removed_items <- expected_scores %>% 
+  mutate(highlight_item = item %in% c("A2", "A8", "A11")) %>% 
+  mutate(line_width = ifelse(highlight_item, 1, 0.5))
+
+highlight_removed_items %>% 
+  ggplot(aes(x = theta, y = expected_score, colour = item, text = item, alpha = highlight_item)) +
+  geom_line(aes(size = highlight_item)) +
+  #geom_point(data = highlight_removed_items %>% filter(highlight_item == TRUE, theta == 0)) +
+  ggrepel::geom_label_repel(
+    data = highlight_removed_items %>% filter(highlight_item == TRUE, theta == 0),
+    aes(label = item),
+    box.padding = 0,
+    show.legend = FALSE
+  ) +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  scale_size_manual(values = c("FALSE" = 0.6, "TRUE" = 0.9), guide = "none") +
+  scale_alpha_discrete(guide = "none", range = c(0.2, 1)) +
+  labs(y = "Expected score") +
+  theme_minimal() +
+  theme(legend.position="bottom",#legend.title=element_blank(),
+      legend.margin = margin(0, 0, 0, 0),
+      legend.spacing.x = unit(1, "mm"),
+      legend.spacing.y = unit(0, "mm")) +
+  guides(colour = guide_legend(nrow = 2))
+ggsave(file = "output/uoe_pre_iccs-highlight.pdf", width = 16, height = 10, units = "cm")
 ```
 
 
