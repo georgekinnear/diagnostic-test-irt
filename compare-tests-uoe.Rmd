@@ -1,0 +1,889 @@
+---
+title: "Compare two versions of a test with partial credit (University of Edinburgh)"
+author: "George Kinnear"
+date: '2022-04-18'
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{r load-packages, message=FALSE, include=FALSE}
+library(mirt)      # For IRT analysis
+library(psych)     # For factor analysis
+library(parameters)# For factor analysis
+library(tidyverse) # For data wrangling and visualisation
+library(reshape)   # For reshaping nested lists
+library(vroom)     # For reading in many files at once
+library(broom)     # For tidying model output
+library(fs)        # For file system operations
+library(gt)        # For formatting tables
+library(knitr)     # For markdown tables
+library(ggrepel)   # For labelling points without overlap
+library(skimr)     # For data frame level summary
+library(ggridges)  # For ridge plots
+library(plotly)    # For interactive plots
+library(kableExtra)# For formatting tables (with grouped rows)
+
+# define a colour palette for the MATH taxonomy
+MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
+```
+
+# 1. Data
+
+
+Load the student scores for the test:
+
+```{r load-all-data, echo=FALSE, message=FALSE}
+# produce list of all the relevant file names
+# (match only "all.csv" in the -q36 versions)
+files_pre <- dir_ls("data-uoe/", recurse = TRUE, regexp = "*diagtest_detail*")
+
+# read all files and add a column called file_path to identify them
+scores_pre <- vroom(files_pre, id = "file_path")
+
+# parse file_path column into year and class
+test_scores_pre <- scores_pre %>%
+  mutate(
+    file_path = str_remove(file_path, "data-uoe/ANON_"),
+    file_path = str_remove(file_path, "diagtest_detail.csv"),
+    ) %>%
+  separate(file_path, c("year", "class"), sep = "/") %>% 
+  # rename question score columns (that are of the form Q followed by a digit)
+  rename_with(.cols = matches("^Q\\d"), .fn = ~ str_replace(., "Q", "A")) %>% 
+  # tidy up non-data rows/columns
+  filter(is.na(X) & !is.na(Total)) %>% 
+  select(-X)
+
+
+# produce list of all the relevant file names
+# (match only "all.csv" in the -q32 versions)
+files_post <- dir_ls("data-uoe/", recurse = TRUE, regexp = "diagtestSep")
+
+# read all files and add a column called file_path to identify them
+scores_post <- vroom(
+  files_post,
+  id = "file_path",
+  # Moodle records "-" as the result for questions that were not attempted,
+  # so we set vroom's na option to interpret this as NA
+  na = c("-", "", "NA")
+)
+
+# parse file_path column into year and class
+test_scores_post <- scores_post %>%
+  mutate(
+    file_path = str_remove(file_path, "data-uoe/ANON_"),
+    file_path = str_remove(file_path, "diagtestSep.csv")
+    ) %>%
+  separate(file_path, c("year", "class"), sep = "/") %>% 
+  # relabel the columns, including using B for the question names
+  rename(Total = `Grade.100.00`) %>% 
+  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "B") %>% str_remove(., "\\.\\.5\\.00")) %>% 
+  # tidy up non-data rows/cols
+  filter(!is.na(Total)) %>% 
+  select(-any_of(c("State", "Completed", "Time.taken")))
+
+#
+# Join data from both test versions together
+#
+# This achieves something like the planned function tidymirt::combined_test_versions
+# see https://github.com/mine-cetinkaya-rundel/tidymirt/issues/1
+#
+
+# construct unique item names that show where each item appeared on each version
+# e.g. A4_B7 means the item was Q4 on version A and Q7 on version B
+# (A0 and B0 are used to indicate the question did not appear on that version)
+test_versions <- read_csv("data-uoe/edinburgh-diagtest-metadata.csv") %>% 
+  mutate(
+    label = case_when(
+      !is.na(pre) & !is.na(post) ~ str_glue("{pre}_{post}"),
+      !is.na(pre) & is.na(post) ~ str_glue("{pre}_B0"),
+      is.na(pre) & !is.na(post) ~ str_glue("A0_{post}"),
+    ),
+    item_num = row_number()
+  ) %>% 
+  mutate(
+    outcome = case_when(
+      !is.na(pre) & !is.na(post) ~ "unchanged",
+      !is.na(pre) & is.na(post) ~ "removed",
+      is.na(pre) & !is.na(post) ~ "added",
+    )
+  )
+
+# helper function - given a df and two character vectors of the same length, this will
+# rename the columns of df, replacing values from old_names with corresponding values from new_names
+replace_names <- function(df, old_names, new_names) {
+  name_lookup <- bind_cols("old" = old_names, "new" = new_names) %>%
+    # remove any rows with NA, since that will cause problems for rename_with
+    drop_na()
+  df %>%
+    rename_with(.fn = ~name_lookup$new, .cols = name_lookup$old)
+}
+
+test_scores = bind_rows(
+  "pre" = test_scores_pre %>%
+    replace_names(old_names = test_versions$pre, new_names = test_versions$label),
+  "post" = test_scores_post %>%
+    replace_names(old_names = test_versions$post, new_names = test_versions$label),
+  .id = "test_version"
+)
+```
+
+<details>
+    <summary>Show data summary</summary>
+```{r data-peek}
+skim(test_scores)
+```
+</details>
+
+There are some `NA`s in the data. These are exclusively in the results from the post version, where Moodle recorded a null response as NA (i.e. cases where students did not give an answer that could be graded).
+
+For this analysis, we replace the `NA` scores with 0, reflecting a non-correct answer.
+
+```{r}
+test_scores = bind_rows(
+  "pre" = test_scores_pre %>%
+    replace_names(old_names = test_versions$pre, new_names = test_versions$label),
+  "post" = test_scores_post %>%
+    mutate(across(matches("^B\\d"), ~ replace_na(., 0))) %>% 
+    replace_names(old_names = test_versions$post, new_names = test_versions$label),
+  .id = "test_version"
+) %>%
+  # we also don't want the Total column, as it skews the shading of the data summary tables below
+  select(-Total)
+```
+
+<details>
+    <summary>Show data summary</summary>
+```{r data-peek2}
+skim(test_scores)
+```
+</details>
+
+## Data summary
+
+The number of responses from each cohort:
+
+```{r skim-classes, warning=FALSE}
+test_scores %>% 
+  group_by(year) %>% 
+  tally() %>% 
+  gt() %>% 
+  data_color(
+    columns = c("n"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  )
+```
+
+There is the same (roughly normal) distribution of raw scores each year:
+
+```{r}
+total_scores <- test_scores %>% mutate(total = rowSums(across(where(is.numeric)), na.rm = TRUE))
+
+total_scores %>%
+  ggplot(aes(x = total)) +
+  geom_histogram(binwidth = 2) +
+  facet_wrap(vars(year)) +
+  theme_minimal()
+```
+
+Mean and standard deviation for each item (note this table is very wide - see the scroll bar at the bottom!):
+
+```{r skim-all-data}
+test_scores %>% 
+  select(-class, -test_version) %>% 
+  group_by(year) %>% 
+  skim_without_charts() %>% 
+  select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
+  rename(complete = complete_rate) %>% 
+  # make the table wider, i.e. with separate columns for each year's results, with the year at the start of each column name
+  pivot_wider(names_from = year, values_from = -c(skim_variable, year), names_glue = "{year}__{.value}") %>% 
+  # put the columns in order by year
+  select(sort(names(.))) %>% 
+  select(skim_variable, everything()) %>% 
+  # use GT to make the table look nice
+  gt(rowname_col = "skim_variable") %>% 
+  # group the columns from each year
+  tab_spanner_delim(delim = "__") %>%
+  fmt_number(columns = contains("numeric"), decimals = 2) %>%
+  fmt_percent(columns = contains("complete"), decimals = 0) %>% 
+  # change all the numeric.mean and numeric.sd column names to Mean and SD
+  cols_label(
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.mean"), label = "Mean") %>% deframe()
+  ) %>% 
+  cols_label(
+    .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.sd"), label = "SD") %>% deframe()
+  ) %>%
+  data_color(
+    columns = contains("numeric.mean"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  )
+```
+
+# 2. Testing assumptions
+
+Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
+
+Since the combined data on the two versions of the test have large portions of "missing" data (e.g. no responses to new questions from students who completed the old test), it is not possible to carry out the factor analysis as in the analyse-test script, since the factor analysis routine does not work with missing data.
+
+Instead, in the next section we proceed directly to fitting the IRT model, and using the $Q_3$ check for local independence. In the final section, we also run a factor analysis for the data from the new test only.
+
+# 3. Fitting 2 parameter logistic MIRT model
+
+The `mirt` implementation of the graded partial credit model (`gpmc`) requires that the partial marks are consecutive integers. We therefore need to work around this by adjusting our scores into that form (e.g. replacing scores of 0, 2.5, 5 with 1, 2, 3), while keeping track of the true scores attached to each mark level so that we can properly compute expected scores later on.
+
+```{r}
+# save just the matrix of scores
+item_scores <- test_scores %>% 
+  select(matches("^A\\d"))
+
+# Determine the mark levels for each item
+mark_levels <- item_scores %>% 
+  pivot_longer(everything(), names_to = "item", values_to = "score") %>% 
+  distinct() %>% 
+  # we don't want to give a level to NA
+  filter(!is.na(score)) %>% 
+  arrange(parse_number(item), score) %>% 
+  group_by(item) %>%
+  mutate(order = row_number()) %>% 
+# Note that the convention used by mirt is for items that have only 2 levels (i.e. 0 marks or full marks),
+# the columns are P.0 and P.1, while other items are indexed from 1, i.e. P.1, P.2, ...
+# https://github.com/philchalmers/mirt/blob/accd2383b9a4d17a4cab269717ce98434900b62c/R/probtrace.R#L57
+  mutate(level = case_when(
+    max(order) == 2 ~ order - 1,
+    TRUE ~ order * 1.0
+  )) %>% 
+  mutate(levelname = paste0(item, ".P.", level))
+
+# Use the mark_levels table to replace scores with levels
+# (first pivot the data to long form, make the replacement, then pivot back to wide again)
+item_scores_levelled <- item_scores %>% 
+  # temporarily add row identifiers
+  mutate(row = row_number()) %>% 
+  pivot_longer(cols = -row, names_to = "item", values_to = "score") %>% 
+  left_join(mark_levels %>% select(item, score, level), by = c("item", "score")) %>% 
+  select(-score) %>% 
+  pivot_wider(names_from = "item", values_from = "level") %>% 
+  select(-row)
+```
+
+
+<details>
+    <summary>Show model fitting output</summary>
+```{r fit-mirt, warning=FALSE, message=FALSE}
+irt_fit <- mirt(
+  data = item_scores_levelled, # just the columns with question scores
+  model = 1,          # number of factors to extract
+  itemtype = "gpcm",  # generalised partial credit model
+  SE = TRUE           # estimate standard errors
+  )
+```
+</details>
+
+
+
+## Local independence
+
+We compute Yen's $Q_3$ (1984) to check for any dependence between items after controlling for $\theta$. This gives a score for each pair of items, with scores above 0.2 regarded as problematic (see DeMars, p. 48).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+irt_residuals <- residuals(irt_fit, type = "Q3") %>% data.frame
+```
+```{r}
+irt_residuals  %>% as.matrix() %>% 
+  corrplot::corrplot(type = "upper")
+```
+
+This shows that most item pairs are independent, with only one showing cause for concern:
+
+```{r}
+irt_residuals %>%
+  rownames_to_column(var = "item1") %>%
+  as_tibble() %>% 
+  pivot_longer(cols = starts_with("A"), names_to = "item2", values_to = "Q3_score") %>% 
+  filter(abs(Q3_score) > 0.2) %>% 
+  filter(parse_number(item1) < parse_number(item2)) %>%
+  gt()
+```
+
+This pair of questions on variations of the chain rule was also identified by the analysis of the first version of the test.
+
+Given that this violation of the local independence assumption is very mild, we proceed using this model.
+
+## Model parameters
+We then compute factor score estimates and augment the existing data frame with these estimates, to keep everything in one place. To do the estimation, we use the `fscores()` function from the mirt package which takes in a computed model object and computes factor score estimates according to the method specified. We will use the EAP method for factor score estimation, which is the "expected a-posteriori" method, the default.
+
+```{r augment-with-f1}
+test_scores <- test_scores %>%
+  mutate(F1 = fscores(irt_fit, method = "EAP"))
+```
+
+We can also calculate the model coefficient estimates using a generic function `coef()` which is used to extract model coefficients from objects returned by modeling functions. We will set the `IRTpars` argument to `TRUE`, which means slope intercept parameters will be converted into traditional IRT parameters.
+
+```{r extract-coefs}
+irt_coefs <- coef(irt_fit, IRTpars = TRUE)
+```
+
+The resulting object `coefs` is a list, with one element for each question, and an additional `GroupPars` element that we won't be using. For each question, the object records several values:
+
+* `a` is discrimination
+* `b` is difficulty
+* endpoints of the 95% confidence intervals are also shown
+
+To make this output a little more user friendly, we use the `tidy_mirt_coefs` function that we have provided in `common-functions.R`, to produce a single data frame with a row for each question.
+
+```{r map-tidy-mirt-coefs}
+tidy_mirt_coefs <- function(x){
+  x %>%
+    # melt the list element
+    melt() %>%
+    # convert to a tibble
+    as_tibble() %>%
+    # convert factors to characters
+    mutate(across(where(is.factor), as.character)) %>%
+    # only focus on rows where X2 is a, or starts with b (the parameters in the GPCM)
+    filter(X2 == "a" | str_detect(X2, "^b")) %>%
+    # in X1, relabel par (parameter) as est (estimate)
+    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
+    # turn into a wider data frame
+    pivot_wider(names_from = X1, values_from = value) %>% 
+    rename(par = X2)
+}
+
+# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
+tidy_irt_coefs <- map_dfr(head(irt_coefs, -1), tidy_mirt_coefs, .id = "Question")
+```
+
+Here is a nicely formatted table of the result:
+
+```{r tabulate-tidy-output}
+tidy_irt_coefs %>% 
+  filter(par == "a") %>% 
+  select(-par) %>% 
+  rename_with(.fn = ~ paste0("a_", .x), .cols = -Question) %>% 
+  left_join(
+    tidy_irt_coefs %>% 
+      filter(str_detect(par, "^b")),
+    by = "Question"
+  ) %>% 
+  gt(groupname_col = "Question") %>%
+  fmt_number(columns = contains("est|_"), decimals = 3) %>%
+  data_color(
+    columns = contains("a_"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = c("est", "CI_2.5", "CI_97.5"),
+    colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
+  ) %>%
+  tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
+  tab_spanner(label = "Difficulty", columns = c("par", "est", "CI_2.5", "CI_97.5"))
+```
+
+These values are also saved to the file `output/uoe_pre-vs-post_gpcm-results.csv`.
+
+
+```{r save-results}
+tidy_irt_coefs %>% 
+  write_csv("output/uoe_pre-vs-post_gpcm-results.csv")
+```
+
+
+## Information curves
+
+```{r}
+theta <- seq(-6, 6, by=0.05)
+
+info_matrix <- testinfo(irt_fit, theta, individual = TRUE)
+colnames(info_matrix) <- test_versions %>% pull(label)
+item_info_data <- info_matrix %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "item", values_to = "info_y") %>% 
+  left_join(test_versions %>% select(item = label, MATH_group), by = "item") %>% 
+  mutate(item = fct_reorder(item, parse_number(item)))
+```
+
+### Test information curve
+
+```{r}
+item_info_data %>% 
+  group_by(theta) %>% 
+  summarise(info_y = sum(info_y)) %>% 
+  ggplot(aes(x = theta, y = info_y)) +
+  geom_line() +
+  labs(y = "Information") +
+  theme_minimal()
+
+ggsave("output/uoe_pre-vs-post_info.pdf", width = 6, height = 4, units = "in")
+```
+
+
+This shows that the information given by the test is skewed toward the lower end of the ability scale - i.e. it can give more accurate estimates of students' ability where their ability level is slightly below the mean.
+
+### Item information curves
+
+Breaking this down by question helps to highlight those questions that are most/least informative:
+
+```{r}
+item_info_data %>% 
+  ggplot(aes(x = theta, y = info_y, colour = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Information") +
+  theme_minimal()
+```
+
+We can also compute the sums of different subsets of the information curves -- here, we will look at the questions based on their MATH group:
+
+```{r fig.height=3, fig.width=4}
+item_info_data %>% 
+  group_by(theta) %>% 
+  summarise(
+    items_all = sum(info_y),
+    items_A = sum(ifelse(MATH_group == "A", info_y, 0)),
+    items_B = sum(ifelse(MATH_group == "B", info_y, 0)),
+    items_C = sum(ifelse(MATH_group == "C", info_y, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y") %>% 
+  mutate(items = fct_relevel(items, "all", "A", "B", "C")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items)) +
+  geom_line() +
+  scale_colour_manual(values = c("all" = "#000000", MATH_colours)) +
+  labs(x = "Ability", y = "Information") +
+  theme_minimal()
+
+ggsave("output/uoe_pre-vs-post_info-curves_A-vs-B.pdf", units = "cm", width = 14, height = 6)
+```
+
+This shows that the information in the MATH Group B questions is at a higher point on the ability scale than for the MATH Group A questions.
+
+Since the number of items in each case is different, we consider instead the mean information per item:
+
+```{r fig.height=3, fig.width=4}
+item_info_data %>% 
+  group_by(theta) %>% 
+  summarise(
+    items_all = sum(info_y) / n(),
+    items_A = sum(ifelse(MATH_group == "A", info_y, 0)) / sum(ifelse(MATH_group == "A", 1, 0)),
+    items_B = sum(ifelse(MATH_group == "B", info_y, 0)) / sum(ifelse(MATH_group == "B", 1, 0)),
+    items_C = sum(ifelse(MATH_group == "C", info_y, 0)) / sum(ifelse(MATH_group == "C", 1, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y") %>% 
+  mutate(items = fct_relevel(items, "all", "A", "B", "C")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items)) +
+  geom_line() +
+  scale_colour_manual(values = c("all" = "#000000", MATH_colours)) +
+  labs(x = "Ability", y = "Mean information per item") +
+  theme_minimal()
+
+ggsave("output/uoe_pre-vs-post_info-curves_A-vs-B-avg.pdf", units = "cm", width = 10, height = 6)
+```
+
+This shows that items of each MATH group are giving broadly similar levels of information on average, but at different points on the ability scale.
+
+## Total information
+
+Using `mirt`'s `areainfo` function, we can find the total area under the information curves.
+
+```{r}
+info_gpcm <- areainfo(irt_fit, c(-4,4))
+info_gpcm %>% gt()
+```
+
+This shows that the total information in all items is `r info_gpcm$TotalInfo`.
+
+### Information by item
+
+```{r}
+tidy_info <- test_versions %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(irt_fit,
+               c(-4, 4),
+               which.items = .x) %>% pull(TotalInfo)
+  ))
+
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
+```
+
+Restricting instead to the range $-2\leq\theta\leq2$:
+
+```{r}
+tidy_info <- test_versions %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(irt_fit,
+               c(-2, 2),
+               which.items = .x) %>% pull(Info)
+  ))
+
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
+```
+
+### Evaluating the changes
+
+
+```{r fig.height=3, fig.width=4}
+item_info_data %>% 
+  mutate(item = as.character(item)) %>% 
+  left_join(test_versions %>% mutate(item = as.character(label)), by = "item") %>% 
+  group_by(theta) %>% 
+  summarise(
+    items_pre = sum(ifelse(outcome %in% c("unchanged", "removed"), info_y, 0)),
+    items_post = sum(ifelse(outcome %in% c("unchanged", "added"), info_y, 0)),
+    items_added = sum(ifelse(outcome %in% c("added"), info_y, 0)),
+    items_removed = sum(ifelse(outcome %in% c("removed"), info_y, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y") %>% 
+  mutate(panel = ifelse(items %in% c("pre", "post"), "overall", "changes") %>% fct_rev()) %>% 
+  mutate(items = fct_relevel(items, "removed", "added", "pre", "post")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items)) +
+  geom_line() +
+  scale_colour_brewer(palette = "Paired") +
+  facet_wrap(vars(panel), scales = "free_y") +
+  labs(x = "Ability", y = "Information") +
+  theme_minimal()
+
+ggsave("output/uoe_pre-vs-post_info-curves_A-vs-B.pdf", units = "cm", width = 14, height = 6)
+```
+
+The changes have increased the total information in the test:
+
+```{r}
+info_old <- areainfo(irt_fit,
+                     c(-4, 4),
+                     which.items = test_versions %>% filter(outcome %in% c("unchanged", "removed")) %>% pull(item_num))
+info_new <- areainfo(irt_fit,
+                     c(-4, 4),
+                     which.items = test_versions %>% filter(outcome %in% c("unchanged", "added")) %>% pull(item_num))
+
+versions_info <- bind_rows("Version A" = info_old,
+                           "Version B" = info_new,
+                           .id = "version") %>% 
+  select(-LowerBound, -UpperBound, -Info, -Proportion) %>% 
+  mutate(mean = TotalInfo / nitems)
+
+versions_info %>% gt() %>%
+  cols_label(
+    version = "Test version",
+    TotalInfo = "Total information",
+    nitems = "Number of items",
+    mean = "Mean information per item"
+  )
+```
+
+
+
+## Response curves
+
+Since the `gpcm` model is more complicated, there is a characteristic curve for each possible score on the question:
+
+```{r}
+trace_data <- probtrace(irt_fit, theta) %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "level", values_to = "y") %>% 
+  left_join(mark_levels %>% select(item, level = levelname, score), by = "level") %>% 
+  mutate(score = as.factor(score))
+
+trace_data %>% 
+  mutate(item = fct_reorder(item, parse_number(item))) %>% 
+  ggplot(aes(x = theta, y = y, colour = score)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Probability of response") +
+  theme_minimal()
+```
+
+To get a simplified picture for each question, we compute the expected score at each ability level:
+
+```{r}
+expected_scores <- trace_data %>% 
+  mutate(item = fct_reorder(item, parse_number(item))) %>% 
+  group_by(item, theta) %>% 
+  summarise(expected_score = sum(as.double(as.character(score)) * y), .groups = "drop")
+
+expected_scores %>% 
+  ggplot(aes(x = theta, y = expected_score, colour = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Expected score") +
+  theme_minimal()
+```
+
+The resulting curves look quite similar to those from the 2PL, allowing for some similar interpretation. For instance, superimposing all the curves shows that there is a spread of difficulties (i.e. thetas where the expected score is 2.5/5) and that some questions are more discriminating than others (i.e. steeper slopes):
+
+```{r}
+plt <- expected_scores %>% 
+  ggplot(aes(x = theta, y = expected_score, colour = item, text = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  labs(y = "Expected score") +
+  theme_minimal()
+
+ggplotly(plt, tooltip = "text")
+
+ggsave(plot = plt, file = "output/uoe_pre-vs-post_iccs-superimposed.pdf", width = 20, height = 14, units = "cm")
+```
+
+
+### Test response curve
+
+```{r}
+total_expected_score <- expected_scores %>% 
+  group_by(theta) %>% 
+  summarise(expected_score = sum(expected_score))
+
+total_expected_score %>% 
+  ggplot(aes(x = theta, y = expected_score)) +
+  geom_line() +
+  # geom_point(data = total_expected_score %>% filter(theta == 0)) +
+  # ggrepel::geom_label_repel(data = total_expected_score %>% filter(theta == 0), aes(label = round(expected_score, 1)), box.padding = 0.5) +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  labs(y = "Expected score") +
+  theme_minimal()
+```
+
+
+
+
+# 4. Factor analysis for the new test only {.tabset}
+
+## Factor analysis setup
+
+Here we redo the factor analysis, but using only the data from the new version of the test.
+
+```{r}
+item_scores_B <- test_scores %>% 
+  select(-F1) %>% 
+  select(-contains("B0")) %>% 
+  filter(test_version == "post") %>% 
+  # select only the columns with question scores (names like Ax_Bx)
+  select(matches("A\\d+_B\\d+"))
+```
+
+The `parameters` package provides functions that run various checks to see if the data is suitable for factor analysis, and if so, how many factors should be retained.
+
+```{r fa-checks-B}
+structure <- check_factorstructure(item_scores_B)
+n <- n_factors(item_scores_B)
+```
+
+```{r fa-structure-check-B, echo=FALSE, results="asis"}
+# check_factorstructure(item_scores)
+
+# HACK - to make the heading printed by easystats be h4 rather than h1, use ### 
+# TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
+
+res <- capture.output(structure)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors-B, echo=FALSE, results = "asis"}
+res <- capture.output(n)
+cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+```
+
+```{r fa-num-factors-details-B}
+plot(n)
+summary(n) %>% gt()
+#n %>% tibble() %>% gt()
+```
+
+The scree plot shows the eignvalues associated with each factor:
+
+```{r fa-scree-B}
+fa.parallel(item_scores_B, fa = "fa")
+```
+
+Based on this, there is clear support for a 1-factor solution. We also consider the 2-factor solution.
+
+## 1 Factor
+
+<details>
+    <summary>Show factanal output</summary>
+```{r fa1-B}
+fitfact <- factanal(item_scores_B, factors = 1, rotation = "varimax")
+print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load <- tidy(fitfact)
+```
+</details>
+
+```{r warning=FALSE}
+ggplot(load, aes(x = fl1, y = 0)) + 
+  geom_point() + 
+  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  labs(x = "Factor 1", y = NULL,
+       title = "Standardised Loadings", 
+       subtitle = "Based upon correlation matrix") +
+  theme_minimal()
+```
+
+
+```{r}
+load %>% 
+  select(question = variable, factor_loading = fl1) %>% 
+  left_join(test_versions %>% select(question = label, description, MATH_group), by = "question") %>% 
+  arrange(-factor_loading) %>% 
+  gt() %>%
+  data_color(
+    columns = contains("factor"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("MATH"),
+    colors = MATH_colours
+  )
+```
+
+The questions that load most strongly on this factor are again dominated by the MATH Group B questions.
+
+The new "in context" question, A0_B7, is disappointingly low on the factor loading (and on information, shown above). Perhaps the context is sufficiently routine for these students.
+
+## 2 Factor
+
+Here we also investigate the 2-factor solution, to see whether these factors are interpretable.
+
+<details>
+    <summary>Show factanal output</summary>
+```{r fa2-B}
+fitfact2 <- factanal(item_scores_B, factors = 2, rotation = "varimax")
+print(fitfact2, digits = 2, cutoff = 0.3, sort = TRUE)
+
+load2 <- tidy(fitfact2)
+```
+</details>
+
+```{r}
+load2_plot <- load2 %>%
+  rename(question = variable) %>% 
+  left_join(test_versions %>% rename(question = label), by = "question") %>%
+  ggplot(aes(x = fl1, y = fl2, colour = MATH_group, shape = MATH_group)) +
+  geom_point() +
+  geom_text_repel(aes(label = question), show.legend = FALSE, alpha = 0.6) +
+  labs(
+    x = "Factor 1 (of 2)",
+    y = "Factor 2 (of 2)"
+  ) +
+  scale_colour_manual("MATH group", values = MATH_colours) +
+  scale_shape_manual(name = "MATH group", values = c(19, 17, 18)) +
+  theme_minimal()
+
+
+load2_plot +
+  labs(
+    title = "Standardised Loadings",
+    subtitle = "Showing the 2-factor model"
+  )
+
+ggsave("output/uoe_pre-vs-post_2factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
+       plot = load2_plot)
+```
+
+```{r message=FALSE, warning=FALSE}
+main_factors <- load2 %>% 
+#  mutate(factorNone = 0.4) %>%  # add this to set the main factor to "None" where all loadings are below 0.4
+  pivot_longer(names_to = "factor",
+               cols = contains("fl")) %>% 
+  mutate(value_abs = abs(value)) %>% 
+  group_by(variable) %>% 
+  top_n(1, value_abs) %>% 
+  ungroup() %>% 
+  transmute(main_factor = factor, variable)
+
+load2 %>% 
+  select(-uniqueness) %>% 
+  # add the info about which is the main factor
+  left_join(main_factors, by = "variable") %>%
+  left_join(test_versions %>% select(variable = label, description, MATH_group), by = "variable") %>% 
+  arrange(main_factor) %>% 
+  select(main_factor, everything()) %>% 
+  # arrange adjectives by descending loading on main factor
+  rowwise() %>% 
+  mutate(max_loading = max(abs(c_across(starts_with("fl"))))) %>% 
+  group_by(main_factor) %>% 
+  arrange(-max_loading, .by_group = TRUE) %>% 
+  select(-max_loading) %>% 
+  # sort out the presentation
+  rename("Main Factor" = main_factor, # the _ throws a latex error
+         "Question" = variable) %>%
+  mutate_at(
+    vars(starts_with("fl")),
+    ~ cell_spec(round(., digits = 3), bold = if_else(abs(.) > 0.4, T, F))
+  ) %>% 
+  kable(booktabs = T, escape = F, longtable = T) %>% 
+  kableExtra::collapse_rows(columns = 1, valign = "top") %>%
+  kableExtra::kable_styling(latex_options = c("repeat_header"))
+```
+
+> **TODO** interpretation
+
+
+# About this report
+
+This report supports the analysis in the following paper:
+
+> [citation needed]
+
+## Packages
+
+In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
+
+- [**mirt**](https://cran.r-project.org/web/packages/mirt/mirt.pdf): For IRT analysis
+- [**psych**](https://personality-project.org/r/psych/): For factor analysis
+- [**tidyverse**](https://tidyverse.org/): For data wrangling and visualisation
+- [**reshape**](http://had.co.nz/reshape/): For reshaping nested lists
+- [**vroom**](https://vroom.r-lib.org/): For reading in many files at once
+- [**broom**](https://broom.tidymodels.org/): For tidying model output
+- [**fs**](https://fs.r-lib.org/): For file system operations
+- [**gt**](https://gt.rstudio.com/): For formatting tables
+- [**knitr**](https://yihui.org/knitr/): For markdown tables
+- [**ggrepel**](https://ggrepel.slowkow.com/): For labelling points without overlap
+- [**skimr**](https://docs.ropensci.org/skimr/): For data frame level summary
+- [**ggridges**](https://wilkelab.org/ggridges/): For ridge plots
+
+
