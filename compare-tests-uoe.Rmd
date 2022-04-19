@@ -151,9 +151,7 @@ test_scores = bind_rows(
     mutate(across(matches("^B\\d"), ~ replace_na(., 0))) %>% 
     replace_names(old_names = test_versions$post, new_names = test_versions$label),
   .id = "test_version"
-) %>%
-  # we also don't want the Total column, as it skews the shading of the data summary tables below
-  select(-Total)
+)
 ```
 
 <details>
@@ -162,6 +160,52 @@ test_scores = bind_rows(
 skim(test_scores)
 ```
 </details>
+
+
+## Data cleaning
+
+1. For students who took the test more than once, consider the attempt with the highest scores only and remove the others;
+
+2. Eliminate the students who scored three or more zeros in the 5 easiest questions in the
+second-half of the test; and
+
+3. Add the students scoring more than 30 marks in total back to the sample.
+
+```{r}
+# keep a copy
+test_scores_unfiltered <- test_scores
+
+test_scores <- test_scores_unfiltered %>% 
+  group_by(AnonID) %>% 
+  slice_max(Total, n = 1) %>% 
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(invalid_in_easiest_5 = case_when(
+    test_version == "pre" ~ sum(A11_B0==0, A12_B12==0, A13_B13==0, A16_B16==0, A17_B17==0),
+    test_version == "post" ~ sum(is.na(A0_B11), is.na(A12_B12), is.na(A16_B16), is.na(A17_B17), is.na(A18_B18))
+  )
+  ) %>% 
+  filter(invalid_in_easiest_5 <= 2 | Total >= 30) %>% 
+  select(-invalid_in_easiest_5) %>% 
+  ungroup()
+
+# test_scores <- test_scores_unfiltered %>%
+#   group_by(AnonID) %>%
+#   slice_max(Total, n = 1) %>%
+#   ungroup() %>%
+#   filter(Total > 0)
+
+bind_rows(
+  "unfiltered" = test_scores_unfiltered %>% select(Total),
+  "filtered" = test_scores %>% select(Total),
+  .id = "dataset"
+) %>% 
+  mutate(dataset = fct_relevel(dataset, "unfiltered", "filtered")) %>% 
+  ggplot(aes(x = Total)) +
+  geom_histogram(bins = 25) +
+  facet_wrap(vars(dataset)) +
+  theme_minimal()
+```
 
 ## Data summary
 
@@ -181,10 +225,8 @@ test_scores %>%
 There is the same (roughly normal) distribution of raw scores each year:
 
 ```{r}
-total_scores <- test_scores %>% mutate(total = rowSums(across(where(is.numeric)), na.rm = TRUE))
-
-total_scores %>%
-  ggplot(aes(x = total)) +
+test_scores %>%
+  ggplot(aes(x = Total)) +
   geom_histogram(binwidth = 2) +
   facet_wrap(vars(year)) +
   theme_minimal()
@@ -194,7 +236,7 @@ Mean and standard deviation for each item (note this table is very wide - see th
 
 ```{r skim-all-data}
 test_scores %>% 
-  select(-class, -test_version) %>% 
+  select(-class, -test_version, -Total) %>% 
   group_by(year) %>% 
   skim_without_charts() %>% 
   select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
@@ -204,12 +246,13 @@ test_scores %>%
   # put the columns in order by year
   select(sort(names(.))) %>% 
   select(skim_variable, everything()) %>% 
+  select(-contains("complete")) %>% 
   # use GT to make the table look nice
   gt(rowname_col = "skim_variable") %>% 
   # group the columns from each year
   tab_spanner_delim(delim = "__") %>%
   fmt_number(columns = contains("numeric"), decimals = 2) %>%
-  fmt_percent(columns = contains("complete"), decimals = 0) %>% 
+  #fmt_percent(columns = contains("complete"), decimals = 0) %>% 
   # change all the numeric.mean and numeric.sd column names to Mean and SD
   cols_label(
     .list = test_scores %>% select(year) %>% distinct() %>% transmute(col = paste0(year, "__numeric.mean"), label = "Mean") %>% deframe()
