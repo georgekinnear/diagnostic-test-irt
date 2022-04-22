@@ -316,7 +316,7 @@ item_scores_levelled <- item_scores %>%
 
 <details>
     <summary>Show model fitting output</summary>
-```{r fit-mirt, warning=FALSE, message=FALSE}
+```{r fit-mirt, warning=FALSE, message=FALSE, cache=TRUE}
 irt_fit <- mirt(
   data = item_scores_levelled, # just the columns with question scores
   model = 1,          # number of factors to extract
@@ -701,9 +701,12 @@ The resulting curves look quite similar to those from the 2PL, allowing for some
 
 ```{r}
 plt <- expected_scores %>% 
+  left_join(test_versions %>% mutate(item = as.factor(label)), by = "item") %>% 
+  mutate(item_removed = (outcome == "removed")) %>% 
   ggplot(aes(x = theta, y = expected_score, colour = item, text = item)) +
-  geom_line() +
+  geom_line(aes(linetype = outcome)) +
   scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  scale_linetype_manual("outcome", values = c("unchanged" = "solid", "removed" = "dashed", "added" = "twodash")) +
   labs(y = "Expected score") +
   theme_minimal()
 
@@ -718,14 +721,18 @@ ggsave(plot = plt, file = "output/uoe_pre-vs-post_iccs-superimposed.pdf", width 
 ```{r}
 total_expected_score <- expected_scores %>% 
   group_by(theta) %>% 
-  summarise(expected_score = sum(expected_score))
+  summarise(
+    expected_score_pre = sum(ifelse(!str_detect(item, "A0"), expected_score, 0)),
+    expected_score_post = sum(ifelse(!str_detect(item, "B0"), expected_score, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("expected_score_"), names_prefix = "expected_score_", names_to = "test_version", values_to = "expected_score")
 
 total_expected_score %>% 
-  ggplot(aes(x = theta, y = expected_score)) +
+  ggplot(aes(x = theta, y = expected_score, colour = test_version)) +
   geom_line() +
-  # geom_point(data = total_expected_score %>% filter(theta == 0)) +
-  # ggrepel::geom_label_repel(data = total_expected_score %>% filter(theta == 0), aes(label = round(expected_score, 1)), box.padding = 0.5) +
-  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+   geom_point(data = total_expected_score %>% filter(theta == 0)) +
+   ggrepel::geom_label_repel(data = total_expected_score %>% filter(theta == 0), aes(label = str_glue("{test_version}: {round(expected_score, 1)}")), box.padding = 0.5) +
+  scale_colour_viridis_d(option = "plasma", end = 0.7, guide = "none") +
   labs(y = "Expected score") +
   theme_minimal()
 ```
@@ -788,7 +795,7 @@ Based on this, there is clear support for a 1-factor solution. We also consider 
 
 <details>
     <summary>Show factanal output</summary>
-```{r fa1-B}
+```{r fa1-B, cache=TRUE}
 fitfact <- factanal(item_scores_B, factors = 1, rotation = "varimax")
 print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
 
@@ -833,7 +840,7 @@ Here we also investigate the 2-factor solution, to see whether these factors are
 
 <details>
     <summary>Show factanal output</summary>
-```{r fa2-B}
+```{r fa2-B, cache=TRUE}
 fitfact2 <- factanal(item_scores_B, factors = 2, rotation = "varimax")
 print(fitfact2, digits = 2, cutoff = 0.3, sort = TRUE)
 

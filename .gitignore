@@ -3,3 +3,5 @@
 .RData
 eth-zurich.html
 eth-zurich_files/**
+**_cache/html/**
+**_files/**
