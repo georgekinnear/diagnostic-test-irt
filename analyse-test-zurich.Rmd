@@ -187,6 +187,8 @@ summary(n) %>% gt()
 
 
 ```{r fa-scree}
+fa.parallel(item_scores, fa = "fa")
+
 pdf(file = "output/eth_pre_scree.pdf", width = 6, height = 4)
 fa.parallel(item_scores, fa = "fa")
 dev.off()
@@ -200,12 +202,17 @@ We use the `factanal` function to fit a 1-factor model.
 
 _Note that this function cannot handle missing data, so any `NA` scores must be set to `0` for this analysis._
 
-```{r fa1}
+<details>
+    <summary>Show factanal output</summary>
+```{r fa1, cache=TRUE}
 fitfact <- factanal(item_scores,
                     factors = 1,
                     rotation = "varimax")
 print(fitfact, digits = 2, cutoff = 0.3, sort = TRUE)
+```
+</details>
 
+```{r}
 load <- tidy(fitfact)
 
 ggplot(load, aes(x = fl1, y = 0)) + 
@@ -236,10 +243,15 @@ This factor appears to be dominated by "procedural calculus skills": standard ca
 
 Here we also investigate the 6-factor solution, to see whether these factors are interpretable.
 
+<details>
+    <summary>Show factanal output</summary>
 ```{r fa4}
 fitfact6 <- factanal(item_scores, factors = 6, rotation = "varimax")
 print(fitfact6, digits = 2, cutoff = 0.3, sort = TRUE)
+```
+</details>
 
+```{r}
 load6 <- tidy(fitfact6)
 
 ggplot(load6, aes(x = fl1, y = fl2)) + 
@@ -325,7 +337,7 @@ The process is to first fit the model, and save the result as a model object tha
 
 <details>
     <summary>Show model fitting output</summary>
-```{r fit-mirt, warning=FALSE, message=FALSE}
+```{r fit-mirt, warning=FALSE, message=FALSE, cache=TRUE}
 fit_2pl <- mirt(
   data = item_scores, # just the columns with question scores
   model = 1,          # number of factors to extract
@@ -524,116 +536,194 @@ ggplot(test_scores_with_2pl_ability, aes(x = F1, y = class, colour = class, fill
 ## Information curves
 
 
+```{r}
+theta <- seq(-6, 6, by=0.05)
+
+info_matrix <- testinfo(fit_2pl, theta, individual = TRUE)
+colnames(info_matrix) <- item_info %>% pull(question)
+item_info_data <- info_matrix %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "item", values_to = "info_y") %>% 
+  left_join(item_info %>% select(item = question), by = "item") %>% 
+  mutate(item = fct_reorder(item, parse_number(item)))
+```
+
+
 ### Test information curve
 
 ```{r}
-plot(fit_2pl, type = "infoSE", main = "Test information")
+item_info_data %>% 
+  group_by(theta) %>% 
+  summarise(info_y = sum(info_y)) %>% 
+  ggplot(aes(x = theta, y = info_y)) +
+  geom_line() +
+  labs(y = "Information") +
+  theme_minimal()
+
+ggsave("output/eth_pre_info.pdf", width = 6, height = 4, units = "in")
 ```
+
+This shows that the information given by the test is focused reasonably centrally around the mean ability level.
+
 
 ### Item information curves
 
-```{r}
-plot(fit_2pl, type = "infotrace", main = "Item information curves")
-```
-
-### Information values
+Breaking this down by question helps to highlight those questions that are most/least informative:
 
 ```{r}
-Theta <- matrix(seq(-4,4,.01))
-tinfo <- testinfo(fit_2pl, Theta)
-plot(Theta, tinfo, type = 'l')
+item_info_data %>% 
+  ggplot(aes(x = theta, y = info_y, colour = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Information") +
+  theme_minimal()
 ```
+
+## Total information
+
+Using `mirt`'s `areainfo` function, we can find the total area under the information curves.
 
 ```{r}
-info_2pl <- areainfo(fit_2pl, c(-4,4))
-info_2pl %>% gt()
+irt_info <- areainfo(fit_2pl, c(-4,4))
+irt_info %>% gt()
 ```
 
-This shows that the total information in the test is `r info_2pl$TotalInfo`.
+This shows that the total information in all items is `r irt_info$TotalInfo`.
 
+### Information by item
+
+```{r}
+tidy_info <- item_info %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(fit_2pl,
+               c(-4, 4),
+               which.items = .x) %>% pull(TotalInfo)
+  ))
+
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
+```
+
+Restricting instead to the range $-2\leq\theta\leq2$:
+
+```{r}
+tidy_info <- item_info %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(fit_2pl,
+               c(-2, 2),
+               which.items = .x) %>% pull(Info)
+  ))
+
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
+  cols_label(
+    TotalInfo = "Information"
+  )
+```
 
 ## Response curves
 
-```{r}
-plot_2pl_curve <- function(a,b,x,...) {exp(1.7*a*(x-b))/(1+exp(1.7*a*(x-b)))}
-
-tidy_2pl %>% 
-  crossing(data.frame(x = seq(
-    from = -6,
-    to = 6,
-    by = 0.05
-  ))) %>% 
-  mutate(a = a_est, b = b_est) %>% 
-  mutate(
-    y = pmap_dbl(., plot_2pl_curve)
-  ) %>% 
-  mutate(Question = fct_reorder(Question, parse_number(Question))) %>% 
-  ggplot(aes(x, y, colour = Question, alpha = a_est, label = Question)) +
-  geom_line()
-```
-
-### Test response curves
+These show the probability of a correct response at each ability level:
 
 ```{r}
-plot(fit_2pl, type = "score", auto.key = FALSE)
+trace_data <- probtrace(fit_2pl, theta) %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "level", values_to = "y") %>% 
+  separate(level, into = c("item", NA, "score"), sep = "\\.") %>% 
+  mutate(item = fct_reorder(item, parse_number(item))) %>% 
+  filter(score == 1)
+
+trace_data %>% 
+  ggplot(aes(x = theta, y = y, colour = score)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1, guide = "none") +
+  facet_wrap(vars(item)) +
+  labs(y = "Probability of correct response") +
+  theme_minimal()
 ```
 
-### Item response curves
-
-We can get individual item surface and information plots using the `itemplot()` function from the **mirt** package, e.g.
+These can all be overlaid on a single plot:
 
 ```{r}
-mirt::itemplot(fit_2pl, item = 1, 
-               main = "Trace lines for item 1")
-```
+plt <- trace_data %>% 
+  ggplot(aes(x = theta, y = y, colour = item, text = item)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  labs(y = "Probability of correct response") +
+  theme_minimal()
 
-We can also get the plots for all trace lines, one facet per plot.
+ggplotly(plt, tooltip = "text")
+
+ggsave(plot = plt, file = "output/eth_pre_iccs-superimposed.pdf", width = 20, height = 14, units = "cm")
+```
 
 ```{r}
-plot(fit_2pl, type = "trace", auto.key = FALSE)
-```
+removed_items <- read_csv("data-eth/eth-metadata.csv") %>% filter(is.na(post)) %>% select(pre) %>% deframe()
+highlight_removed_items <- trace_data %>% 
+  mutate(highlight_item = item %in% removed_items) %>% 
+  mutate(line_width = ifelse(highlight_item, 1, 0.5))
 
-Or all of them overlaid in one plot.
-
-```{r}
-plot(fit_2pl, type = "trace", facet_items=FALSE)
-```
-
-An alternative approach is using ggplot2 and plotly to add interactivity to make it easier to identify items.
-
-```{r warning=FALSE}
-# store the object
-plt <- plot(fit_2pl, type = "trace", facet_items = FALSE)
-# the data we need is in panel.args
-plt_data <- tibble(
-  x          = plt$panel.args[[2]]$x,
-  y          = plt$panel.args[[2]]$y,
-  subscripts = plt$panel.args[[2]]$subscripts,
-  item       = rep(colnames(item_scores), each = 200)
-) %>%
-  mutate(
-    item_no = str_remove(item, "A") %>% as.numeric(),
-    item    = fct_reorder(item, item_no)
-    )
-
-head(plt_data)
-
-plt_gg <- ggplot(plt_data, aes(x, y, 
-                          colour = item, 
-                          text = item)) + 
-  geom_line() + 
-  labs(
-    title = "2PL - Trace lines",
-    #x = expression(theta),
-    x = "theta",
-    #y = expression(P(theta)),
-    y = "P(theta)",
-    colour = "Item"
+highlight_removed_items %>% 
+  ggplot(aes(x = theta, y = y, colour = item, text = item, alpha = highlight_item)) +
+  geom_line(aes(size = highlight_item)) +
+  #geom_point(data = highlight_removed_items %>% filter(highlight_item == TRUE, theta == 0)) +
+  ggrepel::geom_label_repel(
+    #data = highlight_removed_items %>% filter(highlight_item == TRUE) %>% group_by(item) %>% mutate(item_num = cur_group_id()) %>% ungroup() %>% mutate(threshold = seq(5, -5, len=max(item_num))[item_num]) %>% filter(theta >= threshold) %>% group_by(item_num) %>% slice(n=1),
+    #data = highlight_removed_items %>% filter(highlight_item == TRUE, y >= 0.5) %>% group_by(item) %>% slice_min(y, n = 1),
+    data = highlight_removed_items %>% filter(highlight_item == TRUE, theta == 0),
+    aes(label = item),
+    box.padding = 0.5,
+    max.overlaps = Inf,
+    min.segment.length = 0,
+    show.legend = FALSE
   ) +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  scale_size_manual(values = c("FALSE" = 0.6, "TRUE" = 0.9), guide = "none") +
+  scale_alpha_discrete(guide = "none", range = c(0.2, 1)) +
+  labs(y = "Expected score") +
   theme_minimal() +
-  theme(legend.position = "none")
-
-ggplotly(plt_gg, tooltip = "text")
+  theme(legend.position="bottom",#legend.title=element_blank(),
+      legend.margin = margin(0, 0, 0, 0),
+      legend.spacing.x = unit(1, "mm"),
+      legend.spacing.y = unit(0, "mm")) +
+  guides(colour = guide_legend(nrow = 4))
+ggsave(file = "output/eth_pre_iccs-highlight.pdf", width = 16, height = 12, units = "cm")
 ```
 
 
