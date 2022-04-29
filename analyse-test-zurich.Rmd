@@ -693,6 +693,66 @@ ggplotly(plt, tooltip = "text")
 ggsave(plot = plt, file = "output/eth_pre_iccs-superimposed.pdf", width = 20, height = 14, units = "cm")
 ```
 
+Here we highlight some items to illustrate the role of the difficulty and discrimination parameters
+
+```{r}
+highlight_items <- c("A1", "A2", "A26", "A27")
+item_colours <- c(viridis::viridis_pal(option = "plasma", end = 0.8, direction = -1)(length(highlight_items)), "black")
+
+wright_plot_shaded <- tidy_2pl %>%
+  mutate(item = Question) %>%
+  mutate(
+    item_colour = case_when(item %in% highlight_items ~ item,
+                            TRUE ~ "ignore"),
+    item_size = if_else(item %in% highlight_items, 4, 3)
+  ) %>% 
+  ggplot(aes(
+    x = a_est,
+    y = b_est,
+    colour = item_colour
+  )) +
+  geom_errorbar(aes(ymin = b_CI_2.5, ymax = b_CI_97.5), width = 0, alpha = 0.5) +
+  geom_errorbar(aes(xmin = a_CI_2.5, xmax = a_CI_97.5), width = 0, alpha = 0.5) +
+  geom_text_repel(aes(label = Question, size = item_size), alpha = 0.5) +
+  geom_point() +
+  scale_colour_manual("item", values = item_colours, limits = highlight_items, guide = "none") +
+  scale_size(guide = "none", range = c(2.5, 4.5)) +
+  theme_minimal() +
+  coord_flip() +
+  labs(x = "Discrimination",
+       y = "Difficulty")
+
+trace_examples <- trace_data %>% 
+  filter(item %in% highlight_items) %>% 
+  ggplot(aes(x = theta, y = y, colour = item)) +
+  geom_line() +
+  # ggrepel::geom_label_repel(
+  #   data = trace_data %>% filter(item %in% highlight_items, y > 0.5) %>% group_by(item) %>% slice_min(y, n = 1),
+  #   aes(label = item),
+  #   box.padding = 0.5,
+  #   min.segment.length = Inf,
+  #   show.legend = FALSE
+  # ) +
+  geom_label(
+    data = trace_data %>% filter(item %in% c("A1", "A27"), y > 0.45) %>% group_by(item) %>% slice_min(y, n = 1),
+    aes(label = item),
+    show.legend = FALSE
+  ) +
+  geom_label(
+    data = trace_data %>% filter(item %in% c("A2", "A26"), y > 0.55) %>% group_by(item) %>% slice_min(y, n = 1),
+    aes(label = item),
+    show.legend = FALSE
+  ) +
+  scale_colour_viridis_d("item", option = "plasma", end = 0.8, direction = -1, guide = "none") +
+  labs(x = "Ability", y = "Probability of correct response") +
+  theme_minimal()
+
+combined_plot <- patchwork::wrap_plots(wright_plot_shaded, trace_examples)
+ggsave("output/eth_pre_wrightmap_highlight.pdf", plot = combined_plot, units = "cm", width = 18, height = 9)
+combined_plot
+```
+
+
 ```{r}
 removed_items <- read_csv("data-eth/eth-metadata.csv") %>% filter(is.na(post)) %>% select(pre) %>% deframe()
 highlight_removed_items <- trace_data %>% 
