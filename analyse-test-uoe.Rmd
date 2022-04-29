@@ -118,18 +118,33 @@ bind_rows(
 
 ## Data summary
 
-The number of responses from each class:
+Summary of each cohort:
 
 ```{r skim-classes}
 test_scores %>% 
   group_by(year) %>% 
-  tally() %>% 
+  summarise(
+    n = n(),
+    mean = mean(Total),
+    sd = sd(Total),
+    median = median(Total)
+  ) %>% 
   gt() %>% 
+  fmt_number(columns = c("mean", "sd"), decimals = 2) %>%
   data_color(
     columns = c("n"),
     colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
   )
 ```
+
+```{r}
+test_scores %>% 
+  ggplot(aes(x = Total, y = year, fill = year)) +
+  ggridges::geom_density_ridges() +
+  scale_fill_viridis_d() +
+  theme_minimal()
+```
+
 
 Mean and standard deviation for each item:
 
