@@ -7,6 +7,13 @@ output:
     toc: yes
     toc_float: yes
     code_folding: hide
+  bookdown::html_document2: 
+    fig_caption: true
+    global_numbering: true
+    theme: bootstrap
+    toc: yes
+    toc_depth: 2
+    code_folding: hide
 editor_options:
   chunk_output_type: console
 ---
@@ -88,7 +95,7 @@ second-half of the test; and
 
 3. Add the students scoring more than 30 marks in total back to the sample.
 
-```{r}
+```{r fig.cap="Distribution of scores, filtered vs unfiltered"}
 test_scores <- test_scores_unfiltered %>% 
   group_by(AnonID) %>% 
   slice_max(Total, n = 1) %>% 
@@ -547,10 +554,10 @@ item_info_data %>%
   summarise(info_y = sum(info_y)) %>% 
   ggplot(aes(x = theta, y = info_y)) +
   geom_line() +
-  labs(y = "Information") +
+  labs(x = "Ability", y = "Information", title = "Edinburgh") +
   theme_minimal()
 
-ggsave("output/uoe_pre_info.pdf", width = 6, height = 4, units = "in")
+ggsave("output/uoe_pre_info.pdf", width = 10, height = 6, units = "cm")
 ```
 
 This shows that the information given by the test is skewed toward the lower end of the ability scale - i.e. it can give more accurate estimates of students' ability where their ability level is slightly below the mean.
@@ -761,7 +768,7 @@ highlight_removed_items %>%
   scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
   scale_size_manual(values = c("FALSE" = 0.6, "TRUE" = 0.9), guide = "none") +
   scale_alpha_discrete(guide = "none", range = c(0.2, 1)) +
-  labs(y = "Expected score") +
+  labs(x = "Ability", y = "Expected score") +
   theme_minimal() +
   theme(legend.position="bottom",#legend.title=element_blank(),
       legend.margin = margin(0, 0, 0, 0),

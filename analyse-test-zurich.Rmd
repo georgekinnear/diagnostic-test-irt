@@ -479,7 +479,7 @@ tidy_2pl %>%
 ```
 
 ```{r}
-tidy_2pl %>% 
+wright_plot <- tidy_2pl %>% 
   mutate(qnum = parse_number(Question)) %>% 
   ggplot(aes(
     x = a_est,
@@ -492,6 +492,8 @@ tidy_2pl %>%
   theme_minimal() +
   labs(x = "Discrimination",
        y = "Difficulty")
+
+wright_plot
 ```
 
 ```{r save-2pl-results}
@@ -558,10 +560,10 @@ item_info_data %>%
   summarise(info_y = sum(info_y)) %>% 
   ggplot(aes(x = theta, y = info_y)) +
   geom_line() +
-  labs(y = "Information") +
+  labs(x = "Ability", y = "Information", title = "ETH") +
   theme_minimal()
 
-ggsave("output/eth_pre_info.pdf", width = 6, height = 4, units = "in")
+ggsave("output/eth_pre_info.pdf", width = 10, height = 6, units = "cm")
 ```
 
 This shows that the information given by the test is focused reasonably centrally around the mean ability level.
@@ -776,7 +778,7 @@ highlight_removed_items %>%
   scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
   scale_size_manual(values = c("FALSE" = 0.6, "TRUE" = 0.9), guide = "none") +
   scale_alpha_discrete(guide = "none", range = c(0.2, 1)) +
-  labs(y = "Expected score") +
+  labs(x = "Ability", y = "Expected score") +
   theme_minimal() +
   theme(legend.position="bottom",#legend.title=element_blank(),
       legend.margin = margin(0, 0, 0, 0),
