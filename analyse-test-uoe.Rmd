@@ -34,6 +34,7 @@ library(ggrepel)   # For labelling points without overlap
 library(skimr)     # For data frame level summary
 library(ggridges)  # For ridge plots
 library(plotly)    # For interactive plots
+library(patchwork) # For combining plots
 
 # define a colour palette for the MATH taxonomy
 MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
@@ -128,14 +129,16 @@ bind_rows(
 Summary of each cohort:
 
 ```{r skim-classes}
-test_scores %>% 
+test_scores_summary <- test_scores %>% 
   group_by(year) %>% 
   summarise(
     n = n(),
     mean = mean(Total),
     sd = sd(Total),
     median = median(Total)
-  ) %>% 
+  )
+
+test_scores_summary %>% 
   gt() %>% 
   fmt_number(columns = c("mean", "sd"), decimals = 2) %>%
   data_color(
@@ -146,10 +149,46 @@ test_scores %>%
 
 ```{r}
 test_scores %>% 
-  ggplot(aes(x = Total, y = year, fill = year)) +
+  ggplot(aes(x = Total)) +
   ggridges::geom_density_ridges() +
-  scale_fill_viridis_d() +
+  facet_grid(cols = vars(year)) +
   theme_minimal()
+```
+
+```{r}
+p1 <- test_scores %>% 
+  ggplot(aes(x = Total)) +
+  geom_histogram(binwidth = 5) +
+  #scale_x_continuous(limits = c(0,100), breaks = c(0, 50, 100)) +
+  facet_grid(cols = vars(year)) +
+  theme_minimal() +
+  labs(x = "Total score (out of 100)",
+       y = "Number of students",
+       title = "Edinburgh MDT") +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+
+p2 <- test_scores_summary %>% 
+  mutate(
+    n = str_glue("{n}"),
+    mean = str_glue("{round(mean, digits = 1)}"),
+    sd = str_glue("{round(sd, digits = 1)}"),
+    median = str_glue("{median}")
+  ) %>% 
+  pivot_longer(c(n, mean, sd, median), names_to = "layer", values_to = "label") %>% 
+  mutate(layer = fct_relevel(layer, c("n", "sd", "mean", "median")) %>% fct_rev()) %>% 
+  ggplot(aes(x = 80, y = layer, label = label)) +
+  geom_text(size = 10 * 5/14, hjust = 1) +
+  scale_x_continuous(limits = c(0,100)) +
+  facet_grid(cols = vars(year)) +
+  labs(y = "", x = NULL) +
+  scale_y_discrete(labels = c("n" = "N", "mean" = "Mean", "median" = "Median")) +
+  theme_minimal() +
+  theme(axis.line = element_blank(), axis.ticks = element_blank(), axis.text.x = element_blank(),
+        panel.grid = element_blank(), strip.text = element_blank())
+
+p1 / p2 +  plot_layout(heights = c(5, 2.5))
+
+ggsave("output/uoe_pre_data-summary.pdf", units = "cm", width = 12, height = 8)
 ```
 
 
@@ -554,7 +593,7 @@ item_info_data %>%
   summarise(info_y = sum(info_y)) %>% 
   ggplot(aes(x = theta, y = info_y)) +
   geom_line() +
-  labs(x = "Ability", y = "Information", title = "Edinburgh") +
+  labs(x = "Ability", y = "Information", title = "Edinburgh MDT") +
   theme_minimal()
 
 ggsave("output/uoe_pre_info.pdf", width = 10, height = 6, units = "cm")
