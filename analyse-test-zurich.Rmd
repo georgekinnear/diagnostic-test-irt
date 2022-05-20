@@ -7,6 +7,7 @@ output:
     toc: yes
     toc_float: yes
     code_folding: hide
+    number_sections: true
 editor_options:
   chunk_output_type: console
 ---
@@ -22,6 +23,7 @@ library(broom)     # For tidying model output
 library(fs)        # For file system operations
 library(gt)        # For formatting tables
 library(knitr)     # For markdown tables
+library(kableExtra)# For extra formatting of tables
 library(ggrepel)   # For labelling points without overlap
 library(skimr)     # For data frame level summary
 library(ggridges)  # For ridge plots
@@ -29,7 +31,7 @@ library(plotly)    # For interactive plots
 library(patchwork) # For combining plots
 ```
 
-# 1. Data
+# Data
 
 Information about the test:
 
@@ -142,7 +144,7 @@ Mean and standard deviation for each item:
 
 ```{r skim-all-data}
 test_scores %>% 
-  select(-class) %>% 
+  select(-class, -Total) %>% 
   group_by(year) %>% 
   skim_without_charts() %>% 
   select(-contains("character."), -contains("numeric.p"), -skim_type) %>% 
@@ -171,11 +173,11 @@ test_scores %>%
   )
 ```
 
-# 2. Testing assumptions
+# Testing assumptions
 
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of *unidimensionality* in the test scores.
 
-### Inter-item correlations
+## Inter-item correlations
 
 If the test is unidimensional then we would expect student scores on pairs of items to be correlated.
 
@@ -183,7 +185,7 @@ This plot shows the correlations between scores on each pair of items:
 
 ```{r corr-plot}
 item_scores <- test_scores %>% 
-  select(-class, -year)
+  select(-class, -year, -Total)
 
 cor_ci <- psych::corCi(item_scores, plot = FALSE)
 
@@ -204,7 +206,7 @@ cor_ci$ci %>%
 
 Thus, the overall picture is that the item scores are well correlated with each other.
 
-### Dimensionality
+## Dimensionality
 
 We use *factor analysis* as another way to assess unidimensionality. We are looking to see whether a 1-factor solution is feasible.
 
@@ -220,7 +222,7 @@ n <- n_factors(item_scores)
 # TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
 
 res <- capture.output(structure)
-cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+cat(paste0("##", paste0(res, collapse = "\n"), sep = ""))
 ```
 
 ```{r fa-num-factors, echo=FALSE, results = "asis"}
@@ -228,7 +230,7 @@ res <- capture.output(n)
 cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
 ```
 
-```{r fa-num-factors-details}
+```{r fa-num-factors-details, warning=FALSE}
 plot(n)
 summary(n) %>% gt()
 #n %>% tibble() %>% gt()
@@ -323,12 +325,11 @@ main_factors <- load6 %>%
   ungroup() %>% 
   transmute(main_factor = factor, variable)
 
-library(kableExtra)
 load6 %>% 
   select(-uniqueness) %>% 
   # add the info about which is the main factor
-  left_join(main_factors) %>%
-  left_join(item_info %>% select(variable = question, description)) %>% 
+  left_join(main_factors, by = "variable") %>%
+  left_join(item_info %>% select(variable = question, description), by = "variable") %>% 
   arrange(main_factor) %>% 
   select(main_factor, everything()) %>% 
   # arrange adjectives by descending loading on main factor
@@ -355,7 +356,7 @@ The third and fourth factors are "procedural calculus skills", with the product 
 
 The fifth and sixth factors have a geometrical flavour, with the fifth factor in particular being about "vector geometry".
 
-## Conclusion
+### Conclusion
 
 The 6-factor solution does seem to be interpretable, however the 1-factor solution is still reasonable. In terms of explaining the variance in the data, the 1-factor solution does a good job at capturing a large chunk:
 
@@ -374,7 +375,7 @@ rbind(`Proportion Var` = propvar6, `Cumulative Var` = cumsum(propvar6))
 
 Therefore, we are justified in proceeding with a unidimensional IRT model.
 
-# 3. Fitting 2 parameter logistic MIRT model
+# Fitting 2 parameter logistic MIRT model
 
 We can fit a Multidimensional Item Response Theory (mirt) model. From the function definition:
 
@@ -430,7 +431,7 @@ We then compute factor score estimates and augment the existing data frame with 
 
 ```{r augment-with-f1}
 test_scores_with_2pl_ability <- test_scores %>%
-  mutate(F1 = fscores(fit_2pl, method = "EAP"))
+  bind_cols(fscores(fit_2pl, method = "EAP"))
 ```
 
 We can also calculate the model coefficient estimates using a generic function `coef()` which is used to extract model coefficients from objects returned by modeling functions. We will set the `IRTpars` argument to `TRUE`, which means slope intercept parameters will be converted into traditional IRT parameters.
@@ -804,7 +805,7 @@ combined_plot
 ```
 
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 removed_items <- read_csv("data-eth/eth-metadata.csv") %>% filter(is.na(post)) %>% select(pre) %>% deframe()
 highlight_removed_items <- trace_data %>% 
   mutate(highlight_item = item %in% removed_items) %>% 
@@ -838,7 +839,7 @@ ggsave(file = "output/eth_pre_iccs-highlight.pdf", width = 16, height = 12, unit
 ```
 
 
-# 4. Checking 3PL
+# Checking 3PL
 
 The 3 parameter IRT model adds a third "guessing" parameter for each item, which gives the lower asymptote of the response curve.
 
@@ -858,7 +859,7 @@ residuals_3pl <- residuals(fit_3pl, type = "Q3") %>% data.frame
 coefs_3pl <- coef(fit_3pl, IRTpars = TRUE)
 
 test_scores_with_3pl_ability <- test_scores %>%
-  mutate(F1 = fscores(fit_3pl, method = "EAP"))
+  bind_cols(fscores(fit_3pl, method = "EAP"))
 ```
 
 ## Local independence
@@ -953,7 +954,7 @@ tidy_3pl %>%
   write_csv("output/eth_pre_3pl-results.csv")
 ```
 
-> **TODO** some comment on the 3PL results - i.e. looks like guessing is indeed rare, but perhaps happening a bit in some questions (any ideas why?)
+This shows that overall guessing appears to be rare; certainly below the level that might be expected if students of very low ability were simply choosing an answer at random.
 
 
 ## Packages
