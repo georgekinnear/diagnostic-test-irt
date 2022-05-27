@@ -7,13 +7,7 @@ output:
     toc: yes
     toc_float: yes
     code_folding: hide
-  bookdown::html_document2: 
-    fig_caption: true
-    global_numbering: true
-    theme: bootstrap
-    toc: yes
-    toc_depth: 2
-    code_folding: hide
+    number_sections: true
 editor_options:
   chunk_output_type: console
 ---
@@ -40,7 +34,7 @@ library(patchwork) # For combining plots
 MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
 ```
 
-# 1. Data
+# Data
 
 Information about the test:
 
@@ -150,8 +144,8 @@ test_scores_summary %>%
 ```{r}
 test_scores %>% 
   ggplot(aes(x = Total)) +
-  ggridges::geom_density_ridges() +
-  facet_grid(cols = vars(year)) +
+  ggridges::geom_density_ridges(aes(y = year, fill = year)) +
+  #facet_grid(cols = vars(year)) +
   theme_minimal()
 ```
 
@@ -227,11 +221,11 @@ test_scores %>%
 
 
 
-# 2. Testing assumptions
+# Testing assumptions
 
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
 
-### Inter-item correlations
+## Inter-item correlations
 
 If the test is unidimensional then we would expect student scores on pairs of items to be correlated.
 
@@ -260,7 +254,7 @@ cor_ci$ci %>%
 
 The overall picture is that the item scores are well correlated with each other.
 
-### Dimensionality
+## Dimensionality
 
 ```{r fa-checks}
 structure <- check_factorstructure(item_scores)
@@ -274,12 +268,12 @@ n <- n_factors(item_scores)
 # TODO - perhaps suggest modification to https://github.com/easystats/insight/blob/master/R/print.easystats_check.R and https://github.com/easystats/parameters/blob/cbbe89c469148735110d5c16ef153e72a20bb0a0/R/n_factors.R#L352
 
 res <- capture.output(structure)
-cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+cat(paste0("##", paste0(res, collapse = "\n"), sep = ""))
 ```
 
 ```{r fa-num-factors, echo=FALSE, results = "asis"}
 res <- capture.output(n)
-cat(paste0("###", paste0(res, collapse = "\n"), sep = ""))
+cat(paste0("##", paste0(res, collapse = "\n"), sep = ""))
 ```
 
 ```{r fa-num-factors-details}
@@ -375,7 +369,7 @@ load2_plot +
     subtitle = "Showing the first 2 factors of the 4-factor model"
   )
 
-ggsave("output/uoe_4factor.pdf", units = "cm", width = 12, height = 8, dpi = 300,
+ggsave("output/uoe_pre_4factor.pdf", units = "cm", width = 14, height = 10, dpi = 300,
        plot = load2_plot)
 ```
 
@@ -425,7 +419,7 @@ The third factor seems to be based on applying calculus techniques to cubic and 
 The fourth factor is dominated by the only two questions that require the use of a calculator (to compute trigonometric functions), but more generally seems to be based on non-calculus skills (vectors, trig, sequences).
 
 
-# 3. Fitting IRT model
+# Fitting IRT model
 
 The `mirt` implementation of the graded partial credit model (`gpmc`) requires that the partial marks are consecutive integers. We therefore need to work around this by adjusting our scores into that form (e.g. replacing scores of 0, 2.5, 5 with 1, 2, 3), while keeping track of the true scores attached to each mark level so that we can properly compute expected scores later on.
 
