@@ -830,7 +830,101 @@ total_expected_score %>%
 ```
 
 
-## Packages
+# Predictive validity
+
+```{r message=FALSE, warning=FALSE}
+course_results <- read_csv("data-uoe/ANON_2013-2017_course-results.csv", col_types = "ccddddddddd")
+
+course_results_long <- course_results %>% 
+  pivot_longer(cols = !c(AnonID, year), names_to = "course", values_to = "mark") %>% 
+  filter(!is.na(mark)) %>% 
+  separate(course, into = c("course_type", "course"), sep = "_") %>% 
+  mutate(year = str_replace(year, "/", "-1"))
+
+course_results_vs_diagtest <- course_results_long %>% 
+  left_join(test_scores_with_ability %>% select(AnonID, year, diagtest_score = Total, F1), by = c("AnonID", "year")) %>% 
+  filter(!is.na(diagtest_score))
+```
+
+We have both course results and diagnostic test scores for the following number of students:
+
+```{r}
+course_results_vs_diagtest %>% 
+  select(AnonID, year) %>% 
+  distinct() %>% 
+  tally()
+```
+
+## Specialist courses
+
+Mathematics students take linear algebra (ILA) in semester 1, then calculus (CAP) and a proofs course (PPS) in semester 2.
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "spec") %>% 
+  janitor::tabyl(year, course) %>% 
+  gt()
+```
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "spec") %>% 
+  mutate(course = fct_relevel(course, "ILA", "CAP", "PPS")) %>% 
+  ggplot(aes(x = diagtest_score, y = mark)) +
+  geom_point(size = 1, stroke = 0) +
+  geom_smooth(method = lm, formula = "y ~ x") +
+  ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
+  facet_grid(cols = vars(course)) +
+  theme_minimal() +
+  theme(strip.text.x = element_text(size = 12)) +
+  labs(x = "Diagnostic Test score", y = "Course result")
+
+ggsave("output/uoe_pre_regression-spec.pdf", units = "cm", width = 16, height = 8)
+```
+
+This shows that the diagnostic test is moderately predictive of success in year 1.
+
+* Note that the correlations are lower in semester 2 courses; this is to be expected, as the information from the diagnostic test becomes less relevant as students experience more teaching during their courses.
+* The correlation in PPS is lower than in CAP. Again this is as we would expect, since much of PPS is concerned with writing proofs and this is not something addressed by the diagnostic test.
+
+## Non-specialist courses
+
+On the non-specialist side, students take the following courses:
+
+* MSE - for engineering and chemistry students, discontinued after 2014-15,
+* EM - for engineering students
+* MNS - for chemistry students
+
+The courses come in two parts: 1a in semester 1, and 1b in semester 2.
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "nonspec") %>% 
+  janitor::tabyl(year, course) %>% 
+  gt()
+```
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "nonspec") %>% 
+  separate(course, into = c("course", "semester"), sep = "\\d") %>% 
+  mutate(semester = ifelse(semester == "a", "Semester 1", "Semester 2")) %>% 
+  mutate(course = fct_relevel(course, "MSE", "EM", "MNS")) %>% 
+  ggplot(aes(x = diagtest_score, y = mark)) +
+  geom_point(size = 1, stroke = 0) +
+  geom_smooth(method = lm, formula = "y ~ x") +
+  ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
+  facet_grid(rows = vars(semester), cols = vars(course)) +
+  theme_minimal() +
+  theme(strip.text.x = element_text(size = 12)) +
+  labs(x = "Diagnostic Test score", y = "Course result")
+
+ggsave("output/uoe_pre_regression-nonspec.pdf", units = "cm", width = 16, height = 16)
+```
+
+We see a similar pattern of the diagnostic test being moderately predictive of Semester 1 results, and still somewhat predictive in Semester 2.
+
+# Packages {.unnumbered}
 
 In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
 
