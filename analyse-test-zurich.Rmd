@@ -1,7 +1,7 @@
 ---
 title: "Analysis of multiple-choice test (ETH Zurich)"
 author: "Mine Çetinkaya-Rundel, George Kinnear"
-date: '2021-04-21'
+date: '2022-06-13'
 output:
   html_document:
     toc: yes
@@ -296,7 +296,7 @@ Here we also investigate the 6-factor solution, to see whether these factors are
 
 <details>
     <summary>Show factanal output</summary>
-```{r fa4}
+```{r fa4, cache=TRUE}
 fitfact6 <- factanal(item_scores, factors = 6, rotation = "varimax")
 print(fitfact6, digits = 2, cutoff = 0.3, sort = TRUE)
 ```
@@ -957,7 +957,13 @@ tidy_3pl %>%
 This shows that overall guessing appears to be rare; certainly below the level that might be expected if students of very low ability were simply choosing an answer at random.
 
 
-## Packages
+# About this report {.unnumbered}
+
+This report supports the analysis in the following paper:
+
+> [citation needed]
+
+## Packages {.unnumbered}
 
 In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
 

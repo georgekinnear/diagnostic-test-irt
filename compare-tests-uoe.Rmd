@@ -451,24 +451,6 @@ item_info_data <- info_matrix %>%
   mutate(item = fct_reorder(item, parse_number(item)))
 ```
 
-### Test information curve
-
-> **TODO** remove this, it includes items from both test versions so is basically meaningless
-
-```{r}
-item_info_data %>% 
-  group_by(theta) %>% 
-  summarise(info_y = sum(info_y)) %>% 
-  ggplot(aes(x = theta, y = info_y)) +
-  geom_line() +
-  labs(y = "Information") +
-  theme_minimal()
-
-ggsave("output/uoe_pre-vs-post_info.pdf", width = 6, height = 4, units = "in")
-```
-
-
-This shows that the information given by the test is skewed toward the lower end of the ability scale - i.e. it can give more accurate estimates of students' ability where their ability level is slightly below the mean.
 
 ### Item information curves
 
@@ -628,7 +610,7 @@ item_info_data %>%
   geom_line() +
   scale_colour_brewer(palette = "Paired") +
   facet_wrap(vars(panel), scales = "free_y") +
-  labs(x = "Ability", y = "Information") +
+  labs(x = "Ability", y = "Information", title = "Edinburgh MDT") +
   theme_minimal()
 
 ggsave("output/uoe_pre-vs-post_info.pdf", units = "cm", width = 14, height = 6)
@@ -1046,7 +1028,7 @@ This report supports the analysis in the following paper:
 
 > [citation needed]
 
-## Packages
+## Packages {.unnumbered}
 
 In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
 

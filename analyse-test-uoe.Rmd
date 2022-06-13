@@ -1,7 +1,7 @@
 ---
 title: "Analysis of test with partial credit (University of Edinburgh)"
 author: "George Kinnear"
-date: '2022-01-12'
+date: '2022-06-13'
 output:
   html_document:
     toc: yes
@@ -298,7 +298,7 @@ We use the `factanal` function to fit a 1-factor model.
 
 _Note that this function cannot handle missing data, so any `NA` scores must be set to `0` for this analysis._
 
-```{r fa1}
+```{r fa1, cache=TRUE}
 fitfact <- factanal(item_scores,
                     factors = 1,
                     rotation = "varimax")
@@ -343,7 +343,7 @@ It is striking here that the MATH Group B questions are those that load most str
 
 Here we also investigate the 4-factor solution, to see whether these factors are interpretable.
 
-```{r fa-alt}
+```{r fa-alt, cache=TRUE}
 fitfact2 <- factanal(item_scores, factors = 4, rotation = "varimax")
 print(fitfact2, digits = 2, cutoff = 0.3, sort = TRUE)
 
@@ -455,7 +455,7 @@ item_scores_levelled <- item_scores %>%
 
 <details>
     <summary>Show model fitting output</summary>
-```{r fit-mirt, warning=FALSE, message=FALSE}
+```{r fit-mirt, warning=FALSE, message=FALSE, cache=TRUE}
 fit_gpcm <- mirt(
   data = item_scores_levelled, # just the columns with question scores
   model = 1,          # number of factors to extract
@@ -924,7 +924,13 @@ ggsave("output/uoe_pre_regression-nonspec.pdf", units = "cm", width = 16, height
 
 We see a similar pattern of the diagnostic test being moderately predictive of Semester 1 results, and still somewhat predictive in Semester 2.
 
-# Packages {.unnumbered}
+# About this report {.unnumbered}
+
+This report supports the analysis in the following paper:
+
+> [citation needed]
+
+## Packages {.unnumbered}
 
 In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
 
