@@ -7,6 +7,7 @@ output:
     code_folding: hide
     toc: yes
     toc_float: yes
+    number_sections: true
 editor_options:
   chunk_output_type: console
 ---
@@ -27,9 +28,10 @@ library(skimr)     # For data frame level summary
 library(ggridges)  # For ridge plots
 library(plotly)    # For interactive plots
 library(kableExtra)# For formatting tables (with grouped rows)
+library(patchwork) # For combining plots
 ```
 
-# 1. Data
+# Data
 
 Load the student scores for the test - here we load the ETH Zurich test data, downloaded from https://pontifex.ethz.ch/s21t5/rate/
 
@@ -196,7 +198,7 @@ test_scores %>%
   )
 ```
 
-# 2. Testing assumptions
+# Testing assumptions
 
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
 
@@ -204,7 +206,7 @@ Since the combined data on the two versions of the test have large portions of "
 
 Instead, in the next section we proceed directly to fitting the IRT model, and using the $Q_3$ check for local independence. In the final section, we also run a factor analysis for the data from the new test only.
 
-# 3. Fitting 2 parameter logistic MIRT model
+# Fitting 2 parameter logistic MIRT model
 
 We use the `mirt` package to fit an item response theory model.
 
@@ -212,9 +214,10 @@ For this analysis, we use the 2 parameter logistic (2PL) model.
 
 <details>
     <summary>Show model fitting output</summary>
-```{r fit-mirt, warning=FALSE, message=FALSE}
+```{r fit-mirt, warning=FALSE, message=FALSE, cache=TRUE}
+# save just the matrix of scores
 item_scores <- test_scores %>% 
-  select(-class, -year, -test_version)
+  select(matches("^A\\d"))
 
 fit_2pl <- mirt(
   data = item_scores, # just the columns with question scores
@@ -366,9 +369,7 @@ tidy_2pl %>%
 
 Do students from different programmes of study have different distributions of ability?
 
-### Differences between years
-
-Compare the distribution of abilities in the year groups (though in this case there is only one).
+Compare the distribution of abilities in the year groups:
 
 ```{r viz-years}
 ggplot(test_scores, aes(F1, y = year, fill = as.factor(year), colour = as.factor(year))) +
@@ -383,92 +384,52 @@ ggplot(test_scores, aes(F1, y = year, fill = as.factor(year), colour = as.factor
 
 ## Information curves
 
-### Test information curve
-
 ```{r}
+theta <- seq(-6, 6, by=0.05)
+
+info_matrix <- testinfo(fit_2pl, theta, individual = TRUE)
+colnames(info_matrix) <- test_versions %>% pull(label)
+item_info_data <- info_matrix %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "item", values_to = "info_y") %>% 
+  mutate(item = fct_reorder(item, parse_number(item)))
+
 plot(fit_2pl, type = "infoSE", main = "Test information")
 ```
 
+
 ### Item information curves
 
+The information curves for each question help to highlight those questions that are most/least informative:
+
 ```{r}
-item_info_plots <- plot(fit_2pl, type = "infotrace", main = "Item information curves")
-item_info_plots
-```
-
-Using the data from these plots, we can compute the sums of different subsets of the information curves, to help evaluate the changes made to the test.
-
-```{r fig.height=3, fig.width=5}
-# Extract the data from the plot, so it can be re-plotted in new ways
-item_info_data <- tibble(item = names(item_info_plots$packet.sizes),
-                         item_data = item_info_plots$panel.args) %>%
-  unnest_wider(item_data) %>%
-  unnest(c(x, y)) %>% 
-  left_join(test_versions %>% select(item = label, outcome), by = "item")
-
 item_info_data %>% 
-  group_by(x) %>% 
-  summarise(
-    #items_all = sum(y),
-    items_pre = sum(ifelse(outcome %in% c("unchanged", "removed"), y, 0)),
-    items_post = sum(ifelse(outcome %in% c("unchanged", "added"), y, 0)),
-    items_added = sum(ifelse(outcome %in% c("added"), y, 0)),
-    items_removed = sum(ifelse(outcome %in% c("removed"), y, 0))
-  ) %>% 
-  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
-  mutate(panel = ifelse(items %in% c("pre", "post"), "overall", "changes") %>% fct_rev()) %>% 
-  mutate(items = fct_relevel(items, "removed", "added", "pre", "post")) %>% 
-  ggplot(aes(x = x, y = y, colour = items)) +
+  ggplot(aes(x = theta, y = info_y, colour = item)) +
   geom_line() +
-  scale_colour_brewer(palette = "Paired") +
-  facet_wrap(vars(panel), scales = "free_y") +
-  labs(x = "Ability", y = "Information") +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Information") +
   theme_minimal()
-
-ggsave("output/eth_compare_info-curves.pdf", units = "cm", width = 14, height = 6)
 ```
 
-This shows that the overall distribution is quite stable between the two versions of the test. The changes have reduced the information, but this was to be expected as the number of items was reduced.
-
-Looking more closely at the information curves for the items that were added and removed, and noting that the number of items in each case is different, we consider instead the mean information per item:
-
-```{r fig.height=3, fig.width=4}
-item_info_data %>% 
-  group_by(x) %>% 
-  summarise(
-    n_added = sum(ifelse(outcome %in% c("added"), 1, 0)),
-    items_added = sum(ifelse(outcome %in% c("added"), y, 0)) / n_added,
-    items_removed = sum(ifelse(outcome %in% c("removed"), y, 0)) / sum(ifelse(outcome %in% c("removed"), 1, 0))
-  ) %>% 
-  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "y") %>% 
-  mutate(items = fct_relevel(items, "removed", "added")) %>% 
-  ggplot(aes(x = x, y = y, colour = items)) +
-  geom_line() +
-  scale_colour_brewer(palette = "Paired") +
-  labs(x = "Ability", y = "Mean information per item") +
-  theme_minimal()
-
-ggsave("output/eth_compare_mean-item-info.pdf", units = "cm", width = 10, height = 6)
-```
-
-This shows that the questions that added questions offer, on average, slightly more information than the questions they replaced (however there are fewer of them, hence lower total information as shown above). The difference is largest in the ability range 0-2.
 
 ## Total information
 
 Using `mirt`'s `areainfo` function, we can find the total area under the information curves.
 
 ```{r}
-all_items = test_versions %>% filter(!is.na(pre) | !is.na(post)) %>% pull(item_num) # amend the filter to consider different subsets of items
-info_2pl <- areainfo(fit_2pl, c(-4,4), which.items = all_items)
-info_2pl %>% gt()
+info_irt <- areainfo(fit_2pl, c(-4,4))
+info_irt %>% gt()
 ```
 
-This shows that the total information in all items (from both versions A and B of the test) is `r info_2pl$TotalInfo`.
+This shows that the total information in all items is `r info_irt$TotalInfo`.
 
 ### Information by item
 
 ```{r}
 tidy_info <- test_versions %>%
+  mutate(item_num = row_number()) %>% 
   mutate(TotalInfo = purrr::map_dbl(
     item_num,
     ~ areainfo(fit_2pl,
@@ -477,10 +438,11 @@ tidy_info <- test_versions %>%
   ))
 
 tidy_info %>%
-  select(label, TotalInfo, description, outcome) %>% 
+  select(-item_num) %>% 
   arrange(-TotalInfo) %>% 
   #group_by(outcome) %>% 
   gt() %>% 
+  sub_missing(columns = one_of("notes"), missing_text = "") %>% 
   fmt_number(columns = contains("a_"), decimals = 2) %>%
   fmt_number(columns = contains("b_"), decimals = 2) %>%
   data_color(
@@ -496,134 +458,166 @@ tidy_info %>%
   )
 ```
 
-
-### Groups of questions
-
-Grouping the questions into those that were unchanged, removed and added between the two versions:
+Restricting instead to the range $-2\leq\theta\leq2$:
 
 ```{r}
-versions_info <- purrr::map_dfr(
-  c("unchanged", "removed", "added"),
-  ~ areainfo(
-    fit_2pl,
-    c(-4, 4),
-    which.items = test_versions %>% filter(outcome == .x) %>% pull(item_num)
-  ) %>% mutate(version = .x, .before = 1)
-) %>%
-  select(-LowerBound,-UpperBound,-Info,-Proportion) %>%
-  mutate(mean = TotalInfo / nitems)
+tidy_info <- test_versions %>%
+  mutate(item_num = row_number()) %>% 
+  mutate(TotalInfo = purrr::map_dbl(
+    item_num,
+    ~ areainfo(fit_2pl,
+               c(-2, 2),
+               which.items = .x) %>% pull(Info)
+  ))
 
-versions_info %>%
-  mutate(version = paste(str_to_title(version), "questions")) %>% 
-  gt() %>%
+tidy_info %>%
+  select(-item_num) %>% 
+  arrange(-TotalInfo) %>% 
+  #group_by(outcome) %>% 
+  gt() %>% 
+  sub_missing(columns = one_of("notes"), missing_text = "") %>% 
+  fmt_number(columns = contains("a_"), decimals = 2) %>%
+  fmt_number(columns = contains("b_"), decimals = 2) %>%
+  data_color(
+    columns = contains("info"),
+    colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
+  ) %>%
+  data_color(
+    columns = contains("outcome"),
+    colors = scales::col_factor(palette = c("viridis"), domain = NULL)
+  ) %>%
   cols_label(
-    version = "Subset",
-    TotalInfo = "Total information",
-    nitems = "Number of items",
-    mean = "Mean information per item"
+    TotalInfo = "Information"
   )
 ```
 
-### Mean information
+### Evaluating the changes
 
-Thus, while the changes to the test have not increased the overall information in the test (and in fact have slightly decreased it due to there being fewer questions), they _have_ increased the mean information per question on the test:
+
+```{r fig.height=3, fig.width=4}
+info_comparison_data <- item_info_data %>% 
+  mutate(item = as.character(item)) %>% 
+  left_join(test_versions %>% mutate(item = as.character(label)), by = "item") %>% 
+  group_by(theta) %>% 
+  summarise(
+    items_pre = sum(ifelse(outcome %in% c("unchanged", "removed"), info_y, 0)),
+    items_post = sum(ifelse(outcome %in% c("unchanged", "added"), info_y, 0)),
+    items_added = sum(ifelse(outcome %in% c("added"), info_y, 0)),
+    items_removed = sum(ifelse(outcome %in% c("removed"), info_y, 0)),
+    n_added = sum(ifelse(outcome %in% c("added"), 1, 0)),
+    items_added_mean = sum(ifelse(outcome %in% c("added"), info_y, 0)) / n_added,
+    items_removed_mean = sum(ifelse(outcome %in% c("removed"), info_y, 0)) / sum(ifelse(outcome %in% c("removed"), 1, 0))
+  ) %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y")
+```
 
 ```{r}
-info_old <- areainfo(fit_2pl,
-                     c(-4, 4),
-                     which.items = test_versions %>% filter(outcome %in% c("unchanged", "removed")) %>% pull(item_num))
-info_new <- areainfo(fit_2pl,
-                     c(-4, 4),
-                     which.items = test_versions %>% filter(outcome %in% c("unchanged", "added")) %>% pull(item_num))
+test_info_total_plot <- info_comparison_data %>% 
+  filter(items %in% c("pre", "post")) %>% 
+  mutate(items = case_when(items == "pre" ~ "Version A", items == "post" ~ "Version B")) %>% 
+  #mutate(items = fct_relevel(items, "pre", "post")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
+  geom_line() +
+  scale_colour_brewer("", palette = "Set1") +
+  scale_linetype_manual("", values = c("dashed", "solid")) +
+  labs(x = "Ability", y = "Information", title = "ETH s21t") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
 
-versions_info <- bind_rows("Version A" = info_old,
-                           "Version B" = info_new,
-                           .id = "version") %>% 
-  select(-LowerBound, -UpperBound, -Info, -Proportion) %>% 
-  mutate(mean = TotalInfo / nitems)
-
-versions_info %>% gt() %>%
-  cols_label(
-    version = "Test version",
-    TotalInfo = "Total information",
-    nitems = "Number of items",
-    mean = "Mean information per item"
-  )
+test_info_total_plot
+ggsave("output/eth_pre-vs-post_info.pdf", units = "cm", width = 8, height = 8)
 ```
 
 
+```{r}
+test_info_changes_plot <- info_comparison_data %>% 
+  filter(!items %in% c("pre", "post")) %>% 
+  mutate(panel = ifelse(str_detect(items, "_mean"), "Mean information\nper question", "Total information")) %>% 
+  mutate(panel = fct_rev(panel)) %>% 
+  mutate(items = str_remove(items, "_mean")) %>% 
+  #mutate(items = fct_relevel(items, "pre", "post")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
+  geom_line() +
+  scale_colour_brewer("", palette = "Paired", direction = -1) +
+  scale_linetype_manual("", values = c("solid", "dashed")) +
+  facet_wrap(vars(panel), scales = "free_y") +
+  labs(x = "Ability", y = "Information", title = "Items added or removed") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
 
+test_info_changes_plot
+ggsave("output/eth_pre-vs-post_changes.pdf", units = "cm", width = 16, height = 8)
+```
+
+```{r}
+test_info_total_plot + test_info_changes_plot + patchwork::plot_layout(widths = c(2, 3))
+
+ggsave("output/eth_pre-vs-post_info-summary.pdf", units = "cm", width = 16, height = 8)
+```
+
+This shows that the questions that added questions offer, on average, slightly more information than the questions they replaced (however there are fewer of them, hence lower total information as shown above). The difference is largest in the ability range 0-2.
 
 ## Response curves
 
-### Test response curves
 
 ```{r}
-plot(fit_2pl, type = "score", auto.key = FALSE)
+trace_data <- probtrace(fit_2pl, theta) %>% 
+  as_tibble() %>% 
+  bind_cols(theta = theta) %>% 
+  pivot_longer(cols = -theta, names_to = "level", values_to = "y") %>% 
+  separate(level, into = c("item", NA, "score"), sep = "\\.")
+
+trace_data %>% 
+  mutate(item = fct_reorder(item, parse_number(item))) %>% 
+  ggplot(aes(x = theta, y = y, colour = score)) +
+  geom_line() +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  facet_wrap(vars(item)) +
+  labs(y = "Probability of response") +
+  theme_minimal()
 ```
 
-### Item response curves
-
-We can get individual item surface and information plots using the `itemplot()` function from the **mirt** package, e.g.
+This plot combines all the trace lines onto a single set of axes:
 
 ```{r}
-mirt::itemplot(fit_2pl, item = 1, 
-               main = "Trace lines for item 1")
+plt <- trace_data %>% 
+  filter(score == 1) %>% 
+  left_join(test_versions %>% mutate(item = as.factor(label)), by = "item") %>% 
+  mutate(item_removed = (outcome == "removed")) %>% 
+  ggplot(aes(x = theta, y = y, colour = item, text = item)) +
+  geom_line(aes(linetype = outcome)) +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  scale_linetype_manual("outcome", values = c("unchanged" = "solid", "removed" = "dashed", "added" = "twodash")) +
+  labs(y = "Expected score") +
+  theme_minimal()
+
+ggplotly(plt, tooltip = "text")
+
+ggsave(plot = plt, file = "output/eth_pre-vs-post_iccs-superimposed.pdf", width = 20, height = 14, units = "cm")
 ```
 
-We can also get the plots for all trace lines, one facet per plot.
+That is quite a busy plot, so here we focus only on the changes:
 
 ```{r}
-plot(fit_2pl, type = "trace", auto.key = FALSE)
-```
+plt <- trace_data %>% 
+  filter(score == 1) %>% 
+  left_join(test_versions %>% mutate(item = as.factor(label)), by = "item") %>% 
+  filter(outcome != "unchanged") %>% 
+  mutate(item_removed = (outcome == "removed")) %>% 
+  ggplot(aes(x = theta, y = y, colour = item, text = item)) +
+  geom_line(aes(linetype = outcome)) +
+  scale_colour_viridis_d(option = "plasma", end = 0.8, direction = -1) +
+  scale_linetype_manual("outcome", values = c("removed" = "dashed", "added" = "solid")) +
+  labs(y = "Expected score") +
+  theme_minimal()
 
-Or all of them overlaid in one plot.
+ggplotly(plt, tooltip = "text")
 
-```{r}
-plot(fit_2pl, type = "trace", facet_items=FALSE)
-```
-
-An alternative approach is using ggplot2 and plotly to add interactivity to make it easier to identify items.
-
-```{r warning=FALSE}
-# store the object
-plt <- plot(fit_2pl, type = "trace", facet_items = FALSE)
-# the data we need is in panel.args
-# TODO - I had to change the [[1]] to [[2]] since the plt has two panels for some reason, with the one we want being the 2nd panel
-plt_data <- tibble(
-  x          = plt$panel.args[[2]]$x,
-  y          = plt$panel.args[[2]]$y,
-  subscripts = plt$panel.args[[2]]$subscripts,
-  item       = rep(colnames(item_scores), each = 200)
-) %>%
-  mutate(
-    item_no = str_remove(item, "A") %>% as.numeric(),
-    item    = fct_reorder(item, item_no)
-    )
-
-head(plt_data)
-
-plt_gg <- ggplot(plt_data, aes(x, y, 
-                          colour = item, 
-                          text = item)) + 
-  geom_line() + 
-  labs(
-    title = "2PL - Trace lines",
-    #x = expression(theta),
-    x = "theta",
-    #y = expression(P(theta)),
-    y = "P(theta)",
-    colour = "Item"
-  ) +
-  theme_minimal() +
-  theme(legend.position = "none")
-
-ggplotly(plt_gg, tooltip = "text")
+ggsave(plot = plt, file = "output/eth_pre-vs-post_iccs-superimposed-highlight.pdf", width = 20, height = 14, units = "cm")
 ```
 
 
-
-# 4. Factor analysis for the new test only {.tabset}
+# Factor analysis for the new test only {.tabset}
 
 ## Factor analysis setup
 
@@ -785,13 +779,13 @@ load4 %>%
 > And of the fourth factor I cannot make sense
 
 
-# About this report
+# About this report {.unnumbered}
 
 This report supports the analysis in the following paper:
 
 > [citation needed]
 
-## Packages
+## Packages {.unnumbered}
 
 In this analysis we used the following packages. You can learn more about each one by clicking on the links below.
 
