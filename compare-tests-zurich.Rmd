@@ -1,7 +1,7 @@
 ---
 title: "Compare two versions of a multiple-choice test (ETH Zurich)"
 author: "George Kinnear"
-date: '2022-01-11'
+date: '2022-06-13'
 output:
   html_document:
     code_folding: hide
@@ -494,7 +494,7 @@ tidy_info %>%
 ### Evaluating the changes
 
 
-```{r fig.height=3, fig.width=4}
+```{r}
 info_comparison_data <- item_info_data %>% 
   mutate(item = as.character(item)) %>% 
   left_join(test_versions %>% mutate(item = as.character(label)), by = "item") %>% 
@@ -511,18 +511,18 @@ info_comparison_data <- item_info_data %>%
   pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y")
 ```
 
-```{r}
+```{r fig.height=3, fig.width=4}
 test_info_total_plot <- info_comparison_data %>% 
   filter(items %in% c("pre", "post")) %>% 
   mutate(items = case_when(items == "pre" ~ "Version A", items == "post" ~ "Version B")) %>% 
   #mutate(items = fct_relevel(items, "pre", "post")) %>% 
   ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
   geom_line() +
-  scale_colour_brewer("", palette = "Set1") +
-  scale_linetype_manual("", values = c("dashed", "solid")) +
-  labs(x = "Ability", y = "Information", title = "ETH s21t") +
+  scale_colour_brewer("ETH s21t", palette = "Set1") +
+  scale_linetype_manual("ETH s21t", values = c("dashed", "solid")) +
+  labs(x = "Ability", y = "Information") +
   theme_minimal() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "top")
 
 test_info_total_plot
 ggsave("output/eth_pre-vs-post_info.pdf", units = "cm", width = 8, height = 8)
@@ -538,12 +538,12 @@ test_info_changes_plot <- info_comparison_data %>%
   #mutate(items = fct_relevel(items, "pre", "post")) %>% 
   ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
   geom_line() +
-  scale_colour_brewer("", palette = "Paired", direction = -1) +
-  scale_linetype_manual("", values = c("solid", "dashed")) +
+  scale_colour_brewer("Questions", palette = "Paired", direction = -1) +
+  scale_linetype_manual("Questions", values = c("solid", "dashed")) +
   facet_wrap(vars(panel), scales = "free_y") +
-  labs(x = "Ability", y = "Information", title = "Items added or removed") +
+  labs(x = "Ability", y = "Information") +
   theme_minimal() +
-  theme(legend.position = "bottom")
+  theme(legend.position = "top")
 
 test_info_changes_plot
 ggsave("output/eth_pre-vs-post_changes.pdf", units = "cm", width = 16, height = 8)
