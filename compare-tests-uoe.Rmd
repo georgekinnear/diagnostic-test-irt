@@ -916,7 +916,131 @@ load2 %>%
 > **TODO** interpretation
 
 
-# About this report
+# Predictive validity
+
+```{r message=FALSE, warning=FALSE}
+course_results <- read_csv("data-uoe/ANON_2013-2017_course-results.csv", col_types = "ccddddddddd")
+
+course_results_long <- course_results %>% 
+  pivot_longer(cols = !c(AnonID, year), names_to = "course", values_to = "mark") %>% 
+  filter(!is.na(mark)) %>% 
+  separate(course, into = c("course_type", "course"), sep = "_") %>% 
+  mutate(year = str_replace(year, "/", "-1"))
+
+course_results_vs_diagtest <- course_results_long %>% 
+  left_join(test_scores %>% select(AnonID, year, diagtest_score = Total, F1), by = c("AnonID", "year")) %>% 
+  filter(!is.na(diagtest_score)) %>% 
+  mutate(test_version = case_when(parse_number(year) >= 2017 ~ "Version B", TRUE ~ "Version A"))
+```
+
+We have both course results and diagnostic test scores for the following number of students:
+
+```{r}
+course_results_vs_diagtest %>% 
+  select(AnonID, year, test_version) %>% 
+  distinct() %>% 
+  janitor::tabyl(year, test_version) %>% 
+  janitor::adorn_totals() %>% 
+  gt()
+```
+
+## Specialist courses
+
+Mathematics students take linear algebra (ILA) in semester 1, then calculus (CAP) and a proofs course (PPS) in semester 2.
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "spec") %>% 
+  janitor::tabyl(year, course) %>% 
+  gt()
+```
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "spec") %>% 
+  mutate(course = fct_relevel(course, "ILA", "CAP", "PPS")) %>% 
+  ggplot(aes(x = diagtest_score, y = mark)) +
+  geom_point(size = 0.8, stroke = 0, alpha = 0.5) +
+  geom_smooth(method = lm, formula = "y ~ x") +
+  ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
+  facet_grid(cols = vars(course), rows = vars(test_version)) +
+  theme_minimal() +
+  theme(strip.text.x = element_text(size = 12),
+        strip.text.y = element_text(size = 12, face = "bold", angle = 0)) +
+  labs(x = "Diagnostic Test score", y = "Course result")
+
+ggsave("output/uoe_pre-vs-post_regression-spec.pdf", units = "cm", width = 16, height = 10)
+```
+
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "spec") %>% 
+  filter(test_version == "Version B") %>% 
+  mutate(course = fct_relevel(course, "ILA", "CAP", "PPS")) %>% 
+  ggplot(aes(x = diagtest_score, y = mark)) +
+  geom_point(size = 0.8, stroke = 0, alpha = 0.5) +
+  geom_smooth(method = lm, formula = "y ~ x") +
+  ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
+  facet_grid(cols = vars(course)) +
+  theme_minimal() +
+  theme(strip.text.x = element_text(size = 12)) +
+  labs(x = "Diagnostic Test score", y = "Course result")
+
+ggsave("output/uoe_post_regression-spec.pdf", units = "cm", width = 16, height = 7)
+```
+
+This shows that the same general pattern of results is observed with the new version of the test (i.e. becoming less predictive from ILA to CAP to PPS), but with generally higher correlations.
+
+## Non-specialist courses
+
+On the non-specialist side, students take the following courses:
+
+* MSE - for engineering and chemistry students, discontinued after 2014-15,
+* EM - for engineering students
+* MNS - for chemistry students
+
+The courses come in two parts: 1a in semester 1, and 1b in semester 2.
+
+```{r}
+course_results_vs_diagtest %>% 
+  filter(course_type == "nonspec") %>% 
+  mutate(year_and_version = str_glue("{year} ({test_version})")) %>% 
+  janitor::tabyl(year_and_version, course) %>% 
+  gt()
+```
+
+For the comparison of results, we drop the first two cohorts since it is only for 2015-16 onward that we have a consistent set of courses.
+
+```{r}
+nonspec_results <- course_results_vs_diagtest %>% 
+  filter(course_type == "nonspec") %>% 
+  separate(course, into = c("course_family", "semester"), sep = "\\d", remove = FALSE) %>% 
+  mutate(semester = ifelse(semester == "a", "Semester 1", "Semester 2")) %>% 
+  mutate(course_family = fct_relevel(course_family, "MSE", "EM", "MNS")) %>% 
+  filter(course_family != "MSE")
+```
+
+```{r}
+nonspec_results %>% 
+  #filter(semester == "Semester 1") %>% 
+  ggplot(aes(x = diagtest_score, y = mark)) +
+  geom_point(size = 1, stroke = 0) +
+  geom_smooth(method = lm, formula = "y ~ x") +
+  ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
+  facet_grid(rows = vars(test_version), cols = vars(course)) +
+  theme_minimal() +
+  theme(strip.text.x = element_text(size = 12),
+        strip.text.y = element_text(size = 12, face = "bold", angle = 0)) +
+  labs(x = "Diagnostic Test score", y = "Course result")
+
+ggsave("output/uoe_pre-vs-post_regression-nonspec.pdf", units = "cm", width = 18, height = 10)
+```
+
+Again, the correlation with course results is higher in all cases for the new version of the test.
+
+
+# About this report {.unnumbered}
 
 This report supports the analysis in the following paper:
 
