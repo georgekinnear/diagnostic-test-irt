@@ -7,6 +7,7 @@ output:
     code_folding: hide
     toc: yes
     toc_float: yes
+    number_sections: true
 editor_options:
   chunk_output_type: console
 ---
@@ -32,7 +33,7 @@ library(kableExtra)# For formatting tables (with grouped rows)
 MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
 ```
 
-# 1. Data
+# Data
 
 
 Load the student scores for the test:
@@ -266,7 +267,7 @@ test_scores %>%
   )
 ```
 
-# 2. Testing assumptions
+# Testing assumptions
 
 Before applying IRT, we should check that the data satisfies the assumptions needed by the model. In particular, to use a 1-dimensional IRT model, we should have some evidence of unidimensionality in the test scores.
 
@@ -274,7 +275,7 @@ Since the combined data on the two versions of the test have large portions of "
 
 Instead, in the next section we proceed directly to fitting the IRT model, and using the $Q_3$ check for local independence. In the final section, we also run a factor analysis for the data from the new test only.
 
-# 3. Fitting 2 parameter logistic MIRT model
+# Fitting 2 parameter logistic MIRT model
 
 The `mirt` implementation of the graded partial credit model (`gpmc`) requires that the partial marks are consecutive integers. We therefore need to work around this by adjusting our scores into that form (e.g. replacing scores of 0, 2.5, 5 with 1, 2, 3), while keeping track of the true scores attached to each mark level so that we can properly compute expected scores later on.
 
@@ -452,6 +453,8 @@ item_info_data <- info_matrix %>%
 
 ### Test information curve
 
+> **TODO** remove this, it includes items from both test versions so is basically meaningless
+
 ```{r}
 item_info_data %>% 
   group_by(theta) %>% 
@@ -628,7 +631,7 @@ item_info_data %>%
   labs(x = "Ability", y = "Information") +
   theme_minimal()
 
-ggsave("output/uoe_pre-vs-post_info-curves_A-vs-B.pdf", units = "cm", width = 14, height = 6)
+ggsave("output/uoe_pre-vs-post_info.pdf", units = "cm", width = 14, height = 6)
 ```
 
 The changes have increased the total information in the test:
@@ -740,7 +743,7 @@ total_expected_score %>%
 
 
 
-# 4. Factor analysis for the new test only {.tabset}
+# Factor analysis for the new test only {.tabset}
 
 ## Factor analysis setup
 
