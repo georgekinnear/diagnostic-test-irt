@@ -38,7 +38,7 @@ MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
 
 Load the student scores for the test:
 
-```{r load-all-data, echo=FALSE, message=FALSE}
+```{r load-all-data, echo=FALSE, message=FALSE, warning=FALSE}
 # produce list of all the relevant file names
 # (match only "all.csv" in the -q36 versions)
 files_pre <- dir_ls("data-uoe/", recurse = TRUE, regexp = "*diagtest_detail*")
@@ -207,6 +207,20 @@ bind_rows(
   facet_wrap(vars(dataset)) +
   theme_minimal()
 ```
+
+```{r}
+bind_rows(
+  "unfiltered" = test_scores_unfiltered %>% select(test_version, Total),
+  "filtered" = test_scores %>% select(test_version, Total),
+  .id = "dataset"
+) %>% 
+  janitor::tabyl(test_version, dataset) %>% 
+  mutate(percent_retained = filtered / unfiltered) %>% 
+  select(test_version, unfiltered, filtered, percent_retained) %>% 
+  gt() %>% 
+  fmt_percent(columns = contains("percent"), decimals = 2)
+```
+
 
 ## Data summary
 
@@ -937,6 +951,8 @@ course_results_vs_diagtest %>%
   gt()
 ```
 
+This plot shows the results for the two versions of the test:
+
 ```{r}
 course_results_vs_diagtest %>% 
   filter(course_type == "spec") %>% 
@@ -949,11 +965,12 @@ course_results_vs_diagtest %>%
   theme_minimal() +
   theme(strip.text.x = element_text(size = 12),
         strip.text.y = element_text(size = 12, face = "bold", angle = 0)) +
-  labs(x = "Diagnostic Test score", y = "Course result")
+  labs(x = "Edinburgh MDT score", y = "Course result")
 
 ggsave("output/uoe_pre-vs-post_regression-spec.pdf", units = "cm", width = 16, height = 10)
 ```
 
+Another copy just focusing on the new version of the test:
 
 ```{r}
 course_results_vs_diagtest %>% 
@@ -967,7 +984,7 @@ course_results_vs_diagtest %>%
   facet_grid(cols = vars(course)) +
   theme_minimal() +
   theme(strip.text.x = element_text(size = 12)) +
-  labs(x = "Diagnostic Test score", y = "Course result")
+  labs(x = "Edinburgh MDT score", y = "Course result")
 
 ggsave("output/uoe_post_regression-spec.pdf", units = "cm", width = 16, height = 7)
 ```
@@ -1014,7 +1031,7 @@ nonspec_results %>%
   theme_minimal() +
   theme(strip.text.x = element_text(size = 12),
         strip.text.y = element_text(size = 12, face = "bold", angle = 0)) +
-  labs(x = "Diagnostic Test score", y = "Course result")
+  labs(x = "Edinburgh MDT score", y = "Course result")
 
 ggsave("output/uoe_pre-vs-post_regression-nonspec.pdf", units = "cm", width = 18, height = 10)
 ```

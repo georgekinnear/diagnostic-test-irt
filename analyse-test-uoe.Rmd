@@ -877,7 +877,7 @@ course_results_vs_diagtest %>%
   facet_grid(cols = vars(course)) +
   theme_minimal() +
   theme(strip.text.x = element_text(size = 12)) +
-  labs(x = "Diagnostic Test score", y = "Course result")
+  labs(x = "Edinburgh MDT score", y = "Course result")
 
 ggsave("output/uoe_pre_regression-spec.pdf", units = "cm", width = 16, height = 8)
 ```
@@ -917,7 +917,7 @@ course_results_vs_diagtest %>%
   facet_grid(rows = vars(semester), cols = vars(course)) +
   theme_minimal() +
   theme(strip.text.x = element_text(size = 12)) +
-  labs(x = "Diagnostic Test score", y = "Course result")
+  labs(x = "Edinburgh MDT score", y = "Course result")
 
 ggsave("output/uoe_pre_regression-nonspec.pdf", units = "cm", width = 16, height = 16)
 ```
