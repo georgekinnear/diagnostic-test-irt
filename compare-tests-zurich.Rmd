@@ -522,7 +522,8 @@ test_info_total_plot <- info_comparison_data %>%
   scale_linetype_manual("ETH s21t", values = c("dashed", "solid")) +
   labs(x = "Ability", y = "Information") +
   theme_minimal() +
-  theme(legend.position = "top")
+  theme(legend.position = "top",
+        legend.title = element_text(face = "bold"))
 
 test_info_total_plot
 ggsave("output/eth_pre-vs-post_info.pdf", units = "cm", width = 8, height = 8)

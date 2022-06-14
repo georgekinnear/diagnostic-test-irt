@@ -28,6 +28,7 @@ library(skimr)     # For data frame level summary
 library(ggridges)  # For ridge plots
 library(plotly)    # For interactive plots
 library(kableExtra)# For formatting tables (with grouped rows)
+library(patchwork) # For combining plots
 
 # define a colour palette for the MATH taxonomy
 MATH_colours <- c("A" = "#D81C3F", "B" = "#0070C0", "C" = "#00B050")
@@ -605,9 +606,8 @@ tidy_info %>%
 
 ### Evaluating the changes
 
-
-```{r fig.height=3, fig.width=4}
-item_info_data %>% 
+```{r}
+info_comparison_data <- item_info_data %>% 
   mutate(item = as.character(item)) %>% 
   left_join(test_versions %>% mutate(item = as.character(label)), by = "item") %>% 
   group_by(theta) %>% 
@@ -617,7 +617,53 @@ item_info_data %>%
     items_added = sum(ifelse(outcome %in% c("added"), info_y, 0)),
     items_removed = sum(ifelse(outcome %in% c("removed"), info_y, 0))
   ) %>% 
-  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y") %>% 
+  pivot_longer(cols = starts_with("items_"), names_to = "items", names_prefix = "items_", values_to = "info_y")
+```
+
+
+```{r fig.height=3, fig.width=4}
+test_info_total_plot <- info_comparison_data %>% 
+  filter(items %in% c("pre", "post")) %>% 
+  mutate(items = case_when(items == "pre" ~ "Version A", items == "post" ~ "Version B")) %>% 
+  #mutate(items = fct_relevel(items, "pre", "post")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
+  geom_line() +
+  scale_colour_brewer("Edinburgh MDT", palette = "Set1") +
+  scale_linetype_manual("Edinburgh MDT", values = c("dashed", "solid")) +
+  labs(x = "Ability", y = "Information") +
+  theme_minimal() +
+  theme(legend.position = "top",
+        legend.title = element_text(face = "bold"))
+
+test_info_total_plot
+ggsave("output/uoe_pre-vs-post_info.pdf", units = "cm", width = 8, height = 8)
+```
+
+
+```{r}
+test_info_changes_plot <- info_comparison_data %>% 
+  filter(!items %in% c("pre", "post")) %>% 
+  ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
+  geom_line() +
+  scale_colour_brewer("Questions", palette = "Paired", direction = -1) +
+  scale_linetype_manual("Questions", values = c("solid", "dashed")) +
+  labs(x = "Ability", y = "Information") +
+  theme_minimal() +
+  theme(legend.position = "top")
+
+test_info_changes_plot
+ggsave("output/uoe_pre-vs-post_changes.pdf", units = "cm", width = 8, height = 8)
+```
+
+```{r}
+test_info_total_plot + test_info_changes_plot
+
+ggsave("output/uoe_pre-vs-post_info-summary.pdf", units = "cm", width = 16, height = 8)
+```
+
+
+```{r fig.height=3, fig.width=4}
+ %>% 
   mutate(panel = ifelse(items %in% c("pre", "post"), "overall", "changes") %>% fct_rev()) %>% 
   mutate(items = fct_relevel(items, "removed", "added", "pre", "post")) %>% 
   ggplot(aes(x = theta, y = info_y, colour = items)) +
