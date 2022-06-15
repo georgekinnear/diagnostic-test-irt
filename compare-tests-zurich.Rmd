@@ -442,7 +442,7 @@ tidy_info %>%
   arrange(-TotalInfo) %>% 
   #group_by(outcome) %>% 
   gt() %>% 
-  sub_missing(columns = one_of("notes"), missing_text = "") %>% 
+  sub_missing(columns = one_of("notes", "pre", "post"), missing_text = "") %>% 
   fmt_number(columns = contains("a_"), decimals = 2) %>%
   fmt_number(columns = contains("b_"), decimals = 2) %>%
   data_color(
@@ -475,7 +475,7 @@ tidy_info %>%
   arrange(-TotalInfo) %>% 
   #group_by(outcome) %>% 
   gt() %>% 
-  sub_missing(columns = one_of("notes"), missing_text = "") %>% 
+  sub_missing(columns = one_of("notes", "pre", "post"), missing_text = "") %>% 
   fmt_number(columns = contains("a_"), decimals = 2) %>%
   fmt_number(columns = contains("b_"), decimals = 2) %>%
   data_color(

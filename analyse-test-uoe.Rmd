@@ -871,7 +871,7 @@ course_results_vs_diagtest %>%
   filter(course_type == "spec") %>% 
   mutate(course = fct_relevel(course, "ILA", "CAP", "PPS")) %>% 
   ggplot(aes(x = diagtest_score, y = mark)) +
-  geom_point(size = 1, stroke = 0) +
+  geom_point(size = 0.8, stroke = 0, alpha = 0.5) +
   geom_smooth(method = lm, formula = "y ~ x") +
   ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
   facet_grid(cols = vars(course)) +
@@ -911,7 +911,7 @@ course_results_vs_diagtest %>%
   mutate(semester = ifelse(semester == "a", "Semester 1", "Semester 2")) %>% 
   mutate(course = fct_relevel(course, "MSE", "EM", "MNS")) %>% 
   ggplot(aes(x = diagtest_score, y = mark)) +
-  geom_point(size = 1, stroke = 0) +
+  geom_point(size = 0.8, stroke = 0, alpha = 0.5) +
   geom_smooth(method = lm, formula = "y ~ x") +
   ggpubr::stat_cor(label.y = 105, p.accuracy = 0.001) +
   facet_grid(rows = vars(semester), cols = vars(course)) +
