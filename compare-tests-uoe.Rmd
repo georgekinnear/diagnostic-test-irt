@@ -392,54 +392,49 @@ The resulting object `coefs` is a list, with one element for each question, and 
 * `b` is difficulty
 * endpoints of the 95% confidence intervals are also shown
 
-To make this output a little more user friendly, we use the `tidy_mirt_coefs` function that we have provided in `common-functions.R`, to produce a single data frame with a row for each question.
+To make this output a little more user friendly, we use the `tidy_mirt_coefs` function that we have provided to produce a single data frame with a row for each question.
 
-```{r map-tidy-mirt-coefs}
-tidy_mirt_coefs <- function(x){
-  x %>%
-    # melt the list element
-    melt() %>%
-    # convert to a tibble
-    as_tibble() %>%
-    # convert factors to characters
-    mutate(across(where(is.factor), as.character)) %>%
-    # only focus on rows where X2 is a, or starts with b (the parameters in the GPCM)
-    filter(X2 == "a" | str_detect(X2, "^b")) %>%
-    # in X1, relabel par (parameter) as est (estimate)
-    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
-    # turn into a wider data frame
-    pivot_wider(names_from = X1, values_from = value) %>% 
-    rename(par = X2)
-}
+```{r tidy-mirt-coefs}
+source("fn_tidy_mirt_coefs.R")
 
-# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
-tidy_irt_coefs <- map_dfr(head(irt_coefs, -1), tidy_mirt_coefs, .id = "Question")
+tidy_irt_coefs <- tidy_mirt_coefs(irt_coefs)
 ```
 
 Here is a nicely formatted table of the result:
 
 ```{r tabulate-tidy-output}
-tidy_irt_coefs %>% 
+tidy_irt_coefs_with_cis <- tidy_irt_coefs %>% 
+  mutate(ci = str_glue("[{round(CI_2.5, 3)}, {round(CI_97.5, 3)}]")) %>% 
+  select(-starts_with("CI_"))
+
+tidy_irt_coefs_with_cis %>% 
   filter(par == "a") %>% 
   select(-par) %>% 
   rename_with(.fn = ~ paste0("a_", .x), .cols = -Question) %>% 
   left_join(
-    tidy_irt_coefs %>% 
+    tidy_irt_coefs_with_cis %>% 
       filter(str_detect(par, "^b")),
     by = "Question"
-  ) %>% 
+  ) %>%
   gt(groupname_col = "Question") %>%
-  fmt_number(columns = contains("est|_"), decimals = 3) %>%
+  fmt_number(columns = contains("est"), decimals = 3) %>%
   data_color(
-    columns = contains("a_"),
+    columns = contains("a_est"),
     colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
   ) %>%
   data_color(
-    columns = c("est", "CI_2.5", "CI_97.5"),
+    columns = c("est"),
     colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
   ) %>%
   tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
-  tab_spanner(label = "Difficulty", columns = c("par", "est", "CI_2.5", "CI_97.5"))
+  tab_spanner(label = "Difficulty", columns = c("par", "est", "ci")) %>% 
+  cols_label(
+    a_est = "Est.",
+    a_ci = "95% CI",
+    par = "Parameter",
+    est = "Est.",
+    ci = "95% CI"
+  )
 ```
 
 These values are also saved to the file `output/uoe_pre-vs-post_gpcm-results.csv`.
@@ -557,6 +552,7 @@ tidy_info %>%
   arrange(-TotalInfo) %>% 
   #group_by(outcome) %>% 
   gt() %>% 
+  sub_missing(columns = one_of("pre", "post"), missing_text = "") %>% 
   fmt_number(columns = contains("a_"), decimals = 2) %>%
   fmt_number(columns = contains("b_"), decimals = 2) %>%
   data_color(
@@ -589,6 +585,7 @@ tidy_info %>%
   arrange(-TotalInfo) %>% 
   #group_by(outcome) %>% 
   gt() %>% 
+  sub_missing(columns = one_of("pre", "post"), missing_text = "") %>% 
   fmt_number(columns = contains("a_"), decimals = 2) %>%
   fmt_number(columns = contains("b_"), decimals = 2) %>%
   data_color(
@@ -635,7 +632,7 @@ test_info_total_plot <- info_comparison_data %>%
   theme(legend.position = "top",
         legend.title = element_text(face = "bold"))
 
-test_info_total_plot
+#test_info_total_plot
 ggsave("output/uoe_pre-vs-post_info.pdf", units = "cm", width = 8, height = 8)
 ```
 
@@ -651,7 +648,7 @@ test_info_changes_plot <- info_comparison_data %>%
   theme_minimal() +
   theme(legend.position = "top")
 
-test_info_changes_plot
+#test_info_changes_plot
 ggsave("output/uoe_pre-vs-post_changes.pdf", units = "cm", width = 8, height = 8)
 ```
 
@@ -659,21 +656,6 @@ ggsave("output/uoe_pre-vs-post_changes.pdf", units = "cm", width = 8, height = 8
 test_info_total_plot + test_info_changes_plot
 
 ggsave("output/uoe_pre-vs-post_info-summary.pdf", units = "cm", width = 16, height = 8)
-```
-
-
-```{r fig.height=3, fig.width=4}
- %>% 
-  mutate(panel = ifelse(items %in% c("pre", "post"), "overall", "changes") %>% fct_rev()) %>% 
-  mutate(items = fct_relevel(items, "removed", "added", "pre", "post")) %>% 
-  ggplot(aes(x = theta, y = info_y, colour = items)) +
-  geom_line() +
-  scale_colour_brewer(palette = "Paired") +
-  facet_wrap(vars(panel), scales = "free_y") +
-  labs(x = "Ability", y = "Information", title = "Edinburgh MDT") +
-  theme_minimal()
-
-ggsave("output/uoe_pre-vs-post_info.pdf", units = "cm", width = 14, height = 6)
 ```
 
 The changes have increased the total information in the test:

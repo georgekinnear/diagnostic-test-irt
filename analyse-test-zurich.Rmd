@@ -459,61 +459,31 @@ In this output:
 * `b` is difficulty
 * endpoints of the 95% confidence intervals are also shown
 
-To make this output a little more user friendly, we should tidy it such that we have a row per question. We'll do this in two steps. First, write a function that tidies the output for one question, i.e. one list element. Then, map this function over the list of all questions, resulting in a data frame.
+To make this output more user friendly, we have produced a function `tidy_mirt_coeffs` that transforms it into a tidy table.
 
-```{r f-tidy-mirt-coefs}
-tidy_mirt_coefs <- function(x){
-  x %>%
-    # melt the list element
-    melt() %>%
-    # convert to a tibble
-    as_tibble() %>%
-    # convert factors to characters
-    mutate(across(where(is.factor), as.character)) %>%
-    # only focus on rows where X2 is a or b (discrimination or difficulty), or g (guessing parameter in 3PL)
-    filter(X2 %in% c("a", "b", "g")) %>%
-    # in X1, relabel par (parameter) as est (estimate)
-    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
-    # unite columns X2 and X1 into a new column called var separated by _
-    unite(X2, X1, col = "var", sep = "_") %>%
-    # turn into a wider data frame
-    pivot_wider(names_from = var, values_from = value)
-}
+```{r tidy-mirt-coefs}
+source("fn_tidy_mirt_coefs.R")
+
+tidy_2pl <- tidy_mirt_coefs(coefs_2pl) %>% 
+  # keep only the a and b parameters from the 2PL model
+  filter(par %in% c("a", "b"))
 ```
 
-Let's see what this does to a single element in `coefs`:
-
-```{r apply-once-tidy-mirt-coefs}
-tidy_mirt_coefs(coefs_2pl[1])
-```
-
-And now let's map it over all 32 elements of coefs:
-
-```{r map-tidy-mirt-coefs}
-# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
-tidy_2pl <- map_dfr(head(coefs_2pl, -1), tidy_mirt_coefs, .id = "Question")
-```
-
-A quick peek at the result:
-
-```{r peek-tidy-output}
-tidy_2pl
-```
-
-And a nicely formatted table of the result:
+Here is the result:
 
 ```{r tabulate-tidy-output}
-tidy_2pl %>% 
-  # remove the redundant g_ variables which only make sense for the 3PL model
-  select(-starts_with("g_")) %>% 
+tidy_2pl %>%
+  mutate(ci = str_glue("[{round(CI_2.5, 2)}, {round(CI_97.5, 2)}]")) %>% 
+  select(-starts_with("CI_")) %>% 
+  pivot_wider(names_from = "par", values_from = c(est, ci), names_glue = "{par}_{.value}") %>% 
   gt() %>% 
-  fmt_number(columns = contains("_"), decimals = 3) %>%
+  fmt_number(columns = contains("_est"), decimals = 2) %>%
   data_color(
-    columns = contains("a_"),
+    columns = contains("a_est"),
     colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
   ) %>%
   data_color(
-    columns = contains("b_"),
+    columns = contains("b_est"),
     colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
   ) %>%
   tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
@@ -521,15 +491,16 @@ tidy_2pl %>%
   cols_label(
     a_est = "Est.",
     b_est = "Est.",
-    a_CI_2.5 = "2.5%",
-    b_CI_2.5 = "2.5%",
-    a_CI_97.5 = "97.5%",
-    b_CI_97.5 = "97.5%"
+    a_ci = "95% CI",
+    b_ci = "95% CI"
   )
 ```
 
 ```{r}
-wright_plot <- tidy_2pl %>% 
+tidy_2pl_wide <- tidy_2pl %>% 
+  pivot_wider(names_from = "par", values_from = c(est, CI_2.5, CI_97.5), names_glue = "{par}_{.value}")
+
+wright_plot <- tidy_2pl_wide %>% 
   mutate(qnum = parse_number(Question)) %>% 
   ggplot(aes(
     x = a_est,
@@ -547,7 +518,7 @@ wright_plot
 ```
 
 ```{r save-2pl-results}
-tidy_2pl %>% 
+tidy_2pl_wide %>% 
   write_csv("output/eth_pre_2pl-results.csv")
 ```
 
@@ -751,7 +722,7 @@ Here we highlight some items to illustrate the role of the difficulty and discri
 highlight_items <- c("A1", "A2", "A26", "A27")
 item_colours <- c(viridis::viridis_pal(option = "plasma", end = 0.8, direction = -1)(length(highlight_items)), "black")
 
-wright_plot_shaded <- tidy_2pl %>%
+wright_plot_shaded <- tidy_2pl_wide %>%
   mutate(item = Question) %>%
   mutate(
     item_colour = case_when(item %in% highlight_items ~ item,
@@ -891,31 +862,30 @@ Given that this violation of the local independence assumption is very mild, we 
 
 ## Model parameters
 
-```{r map-tidy-mirt-coefs-3pl}
-tidy_3pl <- map_dfr(head(coefs_3pl, -1), tidy_mirt_coefs, .id = "Question")
+```{r tidy-mirt-coefs-3pl}
+tidy_3pl <- tidy_mirt_coefs(coefs_3pl) %>% 
+  filter(par %in% c("a", "b", "g"))
 ```
 
-A quick peek at the result:
-
-```{r peek-tidy-output-3pl}
-tidy_3pl
-```
-
-And a nicely formatted table of the result:
+Here is a nicely formatted table of the result:
 
 ```{r tabulate-tidy-output-3pl}
-gt(tidy_3pl) %>%
-  fmt_number(columns = contains("_"), decimals = 3) %>%
+tidy_3pl %>%
+  mutate(ci = str_glue("[{round(CI_2.5, 2)}, {round(CI_97.5, 2)}]")) %>% 
+  select(-starts_with("CI_")) %>% 
+  pivot_wider(names_from = "par", values_from = c(est, ci), names_glue = "{par}_{.value}") %>% 
+  gt() %>% 
+  fmt_number(columns = contains("_est"), decimals = 2) %>%
   data_color(
-    columns = contains("a_"),
+    columns = contains("a_est"),
     colors = scales::col_numeric(palette = c("Greens"), domain = NULL)
   ) %>%
   data_color(
-    columns = contains("b_"),
+    columns = contains("b_est"),
     colors = scales::col_numeric(palette = c("Blues"), domain = NULL)
   ) %>%
   data_color(
-    columns = contains("g_"),
+    columns = contains("g_est"),
     colors = scales::col_numeric(palette = c("Reds"), domain = NULL)
   ) %>%
   tab_spanner(label = "Discrimination", columns = contains("a_")) %>%
@@ -925,17 +895,17 @@ gt(tidy_3pl) %>%
     a_est = "Est.",
     b_est = "Est.",
     g_est = "Est.",
-    a_CI_2.5 = "2.5%",
-    b_CI_2.5 = "2.5%",
-    g_CI_2.5 = "2.5%",
-    a_CI_97.5 = "97.5%",
-    b_CI_97.5 = "97.5%",
-    g_CI_97.5 = "97.5%"
+    a_ci = "95% CI",
+    b_ci = "95% CI",
+    g_ci = "95% CI"
   )
 ```
 
 ```{r plot-tidy-3pl}
-tidy_3pl %>% 
+tidy_3pl_wide <- tidy_3pl %>% 
+  pivot_wider(names_from = "par", values_from = c(est, CI_2.5, CI_97.5), names_glue = "{par}_{.value}")
+
+tidy_3pl_wide %>% 
   mutate(qnum = parse_number(Question)) %>% 
   ggplot(aes(
     x = qnum,
@@ -950,7 +920,7 @@ tidy_3pl %>%
 ```
 
 ```{r save-3pl-results}
-tidy_3pl %>% 
+tidy_3pl_wide %>% 
   write_csv("output/eth_pre_3pl-results.csv")
 ```
 

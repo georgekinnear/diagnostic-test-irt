@@ -509,28 +509,12 @@ Next, we extract the IRT parameters.
 coefs_gpcm <- coef(fit_gpcm, IRTpars = TRUE)
 ```
 
-We use a modified version of the `tidy_mirt_coeffs` function to get all the parameter estimates into a tidy table:
+We use the `tidy_mirt_coeffs` function to get all the parameter estimates into a tidy table:
 
-```{r map-tidy-mirt-coefs}
-tidy_mirt_coefs <- function(x){
-  x %>%
-    # melt the list element
-    melt() %>%
-    # convert to a tibble
-    as_tibble() %>%
-    # convert factors to characters
-    mutate(across(where(is.factor), as.character)) %>%
-    # only focus on rows where X2 is a, or starts with b (the parameters in the GPCM)
-    filter(X2 == "a" | str_detect(X2, "^b")) %>%
-    # in X1, relabel par (parameter) as est (estimate)
-    mutate(X1 = if_else(X1 == "par", "est", X1)) %>%
-    # turn into a wider data frame
-    pivot_wider(names_from = X1, values_from = value) %>% 
-    rename(par = X2)
-}
+```{r tidy-mirt-coefs}
+source("fn_tidy_mirt_coefs.R")
 
-# use head(., -1) to remove the last element, `GroupPars`, which does not correspond to a question
-tidy_gpcm <- map_dfr(head(coefs_gpcm, -1), tidy_mirt_coefs, .id = "Question")
+tidy_gpcm <- tidy_mirt_coefs(coefs_gpcm)
 ```
 
 ```{r}
