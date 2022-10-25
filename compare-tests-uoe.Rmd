@@ -55,7 +55,7 @@ test_scores_pre <- scores_pre %>%
     ) %>%
   separate(file_path, c("year", "class"), sep = "/") %>% 
   # rename question score columns (that are of the form Q followed by a digit)
-  rename_with(.cols = matches("^Q\\d"), .fn = ~ str_replace(., "Q", "A")) %>% 
+  rename_with(.cols = matches("^Q\\d"), .fn = ~ str_replace(., "Q", "e")) %>% 
   # tidy up non-data rows/columns
   filter(is.na(X) & !is.na(Total)) %>% 
   select(-X)
@@ -83,7 +83,7 @@ test_scores_post <- scores_post %>%
   separate(file_path, c("year", "class"), sep = "/") %>% 
   # relabel the columns, including using B for the question names
   rename(Total = `Grade.100.00`) %>% 
-  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "B") %>% str_remove(., "\\.\\.5\\.00")) %>% 
+  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "E") %>% str_remove(., "\\.\\.5\\.00")) %>% 
   # tidy up non-data rows/cols
   filter(!is.na(Total)) %>% 
   select(-any_of(c("State", "Completed", "Time.taken")))
@@ -96,14 +96,18 @@ test_scores_post <- scores_post %>%
 #
 
 # construct unique item names that show where each item appeared on each version
-# e.g. A4_B7 means the item was Q4 on version A and Q7 on version B
-# (A0 and B0 are used to indicate the question did not appear on that version)
+# e.g. e4_E7 means the item was e4 on version A and E7 on version B
+# (e0 and E0 are used to indicate the question did not appear on that version)
 test_versions <- read_csv("data-uoe/edinburgh-diagtest-metadata.csv") %>% 
+  mutate(
+    pre = str_replace(pre, "A", "e"),
+    post = str_replace(post, "B", "E")
+  ) %>% 
   mutate(
     label = case_when(
       !is.na(pre) & !is.na(post) ~ str_glue("{pre}_{post}"),
-      !is.na(pre) & is.na(post) ~ str_glue("{pre}_B0"),
-      is.na(pre) & !is.na(post) ~ str_glue("A0_{post}"),
+      !is.na(pre) & is.na(post) ~ str_glue("{pre}_E0"),
+      is.na(pre) & !is.na(post) ~ str_glue("e0_{post}"),
     ),
     item_num = row_number()
   ) %>% 
@@ -150,7 +154,7 @@ test_scores = bind_rows(
   "pre" = test_scores_pre %>%
     replace_names(old_names = test_versions$pre, new_names = test_versions$label),
   "post" = test_scores_post %>%
-    mutate(across(matches("^B\\d"), ~ replace_na(., 0))) %>% 
+    mutate(across(matches("^E\\d"), ~ replace_na(., 0))) %>% 
     replace_names(old_names = test_versions$post, new_names = test_versions$label),
   .id = "test_version"
 )
@@ -183,8 +187,8 @@ test_scores <- test_scores_unfiltered %>%
   ungroup() %>% 
   rowwise() %>% 
   mutate(invalid_in_easiest_5 = case_when(
-    test_version == "pre" ~ sum(A11_B0==0, A12_B12==0, A13_B13==0, A16_B16==0, A17_B17==0),
-    test_version == "post" ~ sum(is.na(A0_B11), is.na(A12_B12), is.na(A16_B16), is.na(A17_B17), is.na(A18_B18))
+    test_version == "pre" ~ sum(e11_E0==0, e12_E12==0, e13_E13==0, e16_E16==0, e17_E17==0),
+    test_version == "post" ~ sum(is.na(e0_E11), is.na(e12_E12), is.na(e16_E16), is.na(e17_E17), is.na(e18_E18))
   )
   ) %>% 
   filter(invalid_in_easiest_5 <= 2 | Total >= 30) %>% 
@@ -297,7 +301,7 @@ The `mirt` implementation of the graded partial credit model (`gpmc`) requires t
 ```{r}
 # save just the matrix of scores
 item_scores <- test_scores %>% 
-  select(matches("^A\\d"))
+  select(matches("^e\\d"))
 
 # Determine the mark levels for each item
 mark_levels <- item_scores %>% 
@@ -362,7 +366,7 @@ This shows that most item pairs are independent, with only one showing cause for
 irt_residuals %>%
   rownames_to_column(var = "item1") %>%
   as_tibble() %>% 
-  pivot_longer(cols = starts_with("A"), names_to = "item2", values_to = "Q3_score") %>% 
+  pivot_longer(cols = starts_with("e"), names_to = "item2", values_to = "Q3_score") %>% 
   filter(abs(Q3_score) > 0.2) %>% 
   filter(parse_number(item1) < parse_number(item2)) %>%
   gt()
@@ -621,7 +625,7 @@ info_comparison_data <- item_info_data %>%
 ```{r fig.height=3, fig.width=4}
 test_info_total_plot <- info_comparison_data %>% 
   filter(items %in% c("pre", "post")) %>% 
-  mutate(items = case_when(items == "pre" ~ "Version A", items == "post" ~ "Version B")) %>% 
+  mutate(items = case_when(items == "pre" ~ "Version 1", items == "post" ~ "Version 2")) %>% 
   #mutate(items = fct_relevel(items, "pre", "post")) %>% 
   ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
   geom_line() +
@@ -668,8 +672,8 @@ info_new <- areainfo(irt_fit,
                      c(-4, 4),
                      which.items = test_versions %>% filter(outcome %in% c("unchanged", "added")) %>% pull(item_num))
 
-versions_info <- bind_rows("Version A" = info_old,
-                           "Version B" = info_new,
+versions_info <- bind_rows("Version 1" = info_old,
+                           "Version 2" = info_new,
                            .id = "version") %>% 
   select(-LowerBound, -UpperBound, -Info, -Proportion) %>% 
   mutate(mean = TotalInfo / nitems)
@@ -749,8 +753,8 @@ ggsave(plot = plt, file = "output/uoe_pre-vs-post_iccs-superimposed.pdf", width 
 total_expected_score <- expected_scores %>% 
   group_by(theta) %>% 
   summarise(
-    expected_score_pre = sum(ifelse(!str_detect(item, "A0"), expected_score, 0)),
-    expected_score_post = sum(ifelse(!str_detect(item, "B0"), expected_score, 0))
+    expected_score_pre = sum(ifelse(!str_detect(item, "e0"), expected_score, 0)),
+    expected_score_post = sum(ifelse(!str_detect(item, "E0"), expected_score, 0))
   ) %>% 
   pivot_longer(cols = starts_with("expected_score_"), names_prefix = "expected_score_", names_to = "test_version", values_to = "expected_score")
 
@@ -776,10 +780,10 @@ Here we redo the factor analysis, but using only the data from the new version o
 ```{r}
 item_scores_B <- test_scores %>% 
   select(-F1) %>% 
-  select(-contains("B0")) %>% 
+  select(-contains("E0")) %>% 
   filter(test_version == "post") %>% 
-  # select only the columns with question scores (names like Ax_Bx)
-  select(matches("A\\d+_B\\d+"))
+  # select only the columns with question scores (names like ex_Ex)
+  select(matches("e\\d+_E\\d+"))
 ```
 
 The `parameters` package provides functions that run various checks to see if the data is suitable for factor analysis, and if so, how many factors should be retained.
@@ -833,7 +837,7 @@ load <- tidy(fitfact)
 ```{r warning=FALSE}
 ggplot(load, aes(x = fl1, y = 0)) + 
   geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  geom_label_repel(aes(label = paste0("E", rownames(load))), show.legend = FALSE) +
   labs(x = "Factor 1", y = NULL,
        title = "Standardised Loadings", 
        subtitle = "Based upon correlation matrix") +
@@ -859,7 +863,7 @@ load %>%
 
 The questions that load most strongly on this factor are again dominated by the MATH Group B questions.
 
-The new "in context" question, A0_B7, is disappointingly low on the factor loading (and on information, shown above). Perhaps the context is sufficiently routine for these students.
+The new "in context" question, e0_E7, is disappointingly low on the factor loading (and on information, shown above). Perhaps the context is sufficiently routine for these students.
 
 ## 2 Factor
 
@@ -954,7 +958,7 @@ course_results_long <- course_results %>%
 course_results_vs_diagtest <- course_results_long %>% 
   left_join(test_scores %>% select(AnonID, year, diagtest_score = Total, F1), by = c("AnonID", "year")) %>% 
   filter(!is.na(diagtest_score)) %>% 
-  mutate(test_version = case_when(parse_number(year) >= 2017 ~ "Version B", TRUE ~ "Version A"))
+  mutate(test_version = case_when(parse_number(year) >= 2017 ~ "Version 2", TRUE ~ "Version 1"))
 ```
 
 We have both course results and diagnostic test scores for the following number of students:
@@ -1003,7 +1007,7 @@ Another copy just focusing on the new version of the test:
 ```{r}
 course_results_vs_diagtest %>% 
   filter(course_type == "spec") %>% 
-  filter(test_version == "Version B") %>% 
+  filter(test_version == "Version 2") %>% 
   mutate(course = fct_relevel(course, "ILA", "CAP", "PPS")) %>% 
   ggplot(aes(x = diagtest_score, y = mark)) +
   geom_point(size = 0.8, stroke = 0, alpha = 0.5) +

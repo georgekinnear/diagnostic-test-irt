@@ -38,7 +38,8 @@ Information about the test:
 ```{r load-test-info, echo=FALSE, message=FALSE}
 item_info <- read_csv("data-eth/eth-metadata.csv") %>% 
   select(question = pre, description) %>% 
-  filter(!is.na(question))
+  filter(!is.na(question)) %>% 
+  mutate(question = str_replace(question, "A", "z"))
 
 item_info %>%
   gt()
@@ -61,7 +62,8 @@ test_scores <- eth_entry_test %>%
     file_path = str_remove(file_path, "-q36"),
     file_path = str_remove(file_path, ".csv"),
     ) %>%
-  separate(file_path, c("year", "class"), sep = "/")
+  separate(file_path, c("year", "class"), sep = "/") %>% 
+  rename_with(~ str_replace(., "A", "z"))
 ```
 
 ```{r data-peek}
@@ -74,7 +76,7 @@ The data includes scores of `2` for the "I don't know" answer option. We replace
 
 ```{r}
 test_scores <- test_scores %>% 
-  mutate(across(starts_with("A"), ~ ifelse(. == 2, 0, .)))
+  mutate(across(starts_with("z"), ~ ifelse(. == 2, 0, .)))
 ```
 
 ## Data summary
@@ -84,7 +86,7 @@ The number of responses from each class:
 ```{r skim-classes}
 test_scores <- test_scores %>% 
   rowwise() %>% 
-  mutate(Total = rowSums(across(starts_with("A"))))
+  mutate(Total = rowSums(across(starts_with("z"))))
 
 test_scores_summary <- test_scores %>% 
   group_by(year) %>% 
@@ -268,7 +270,7 @@ load <- tidy(fitfact)
 
 ggplot(load, aes(x = fl1, y = 0)) + 
   geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  geom_label_repel(aes(label = paste0("z", rownames(load))), show.legend = FALSE) +
   labs(x = "Factor 1", y = NULL,
        title = "Standardised Loadings", 
        subtitle = "Based upon correlation matrix") +
@@ -307,7 +309,7 @@ load6 <- tidy(fitfact6)
 
 ggplot(load6, aes(x = fl1, y = fl2)) + 
   geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  geom_label_repel(aes(label = paste0("z", rownames(load))), show.legend = FALSE) +
   labs(x = "Factor 1", y = "Factor 2",
        title = "Standardised Loadings", 
        subtitle = "Based upon correlation matrix") +
@@ -415,13 +417,13 @@ This shows that most item pairs are independent, with only one pair showing caus
 residuals_2pl %>%
   rownames_to_column(var = "q1") %>%
   as_tibble() %>% 
-  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  pivot_longer(cols = starts_with("z"), names_to = "q2", values_to = "Q3_score") %>% 
   filter(abs(Q3_score) > 0.2) %>% 
   filter(parse_number(q1) < parse_number(q2)) %>%
   gt()
 ```
 
-Items A18 and A19 are on the product and quotient rules.
+Items z18 and z19 are on the product and quotient rules.
 
 Given that this violation of the local independence assumption is very mild, we proceed using this model.
 
@@ -719,7 +721,7 @@ ggsave(plot = plt, file = "output/eth_pre_iccs-superimposed.pdf", width = 20, he
 Here we highlight some items to illustrate the role of the difficulty and discrimination parameters
 
 ```{r}
-highlight_items <- c("A1", "A2", "A26", "A27")
+highlight_items <- c("z1", "z2", "z26", "z27")
 item_colours <- c(viridis::viridis_pal(option = "plasma", end = 0.8, direction = -1)(length(highlight_items)), "black")
 
 wright_plot_shaded <- tidy_2pl_wide %>%
@@ -757,12 +759,12 @@ trace_examples <- trace_data %>%
   #   show.legend = FALSE
   # ) +
   geom_label(
-    data = trace_data %>% filter(item %in% c("A1", "A27"), y > 0.45) %>% group_by(item) %>% slice_min(y, n = 1),
+    data = trace_data %>% filter(item %in% c("z1", "z27"), y > 0.45) %>% group_by(item) %>% slice_min(y, n = 1),
     aes(label = item),
     show.legend = FALSE
   ) +
   geom_label(
-    data = trace_data %>% filter(item %in% c("A2", "A26"), y > 0.55) %>% group_by(item) %>% slice_min(y, n = 1),
+    data = trace_data %>% filter(item %in% c("z2", "z26"), y > 0.55) %>% group_by(item) %>% slice_min(y, n = 1),
     aes(label = item),
     show.legend = FALSE
   ) +
@@ -777,7 +779,7 @@ combined_plot
 
 
 ```{r message=FALSE, warning=FALSE}
-removed_items <- read_csv("data-eth/eth-metadata.csv") %>% filter(is.na(post)) %>% select(pre) %>% deframe()
+removed_items <- read_csv("data-eth/eth-metadata.csv") %>% filter(is.na(post)) %>% mutate(pre = str_replace(pre, "A", "z")) %>% select(pre) %>% deframe()
 highlight_removed_items <- trace_data %>% 
   mutate(highlight_item = item %in% removed_items) %>% 
   mutate(line_width = ifelse(highlight_item, 1, 0.5))
@@ -848,7 +850,7 @@ This shows that most item pairs are independent, with only a couple of pairs sho
 residuals_3pl %>%
   rownames_to_column(var = "q1") %>%
   as_tibble() %>% 
-  pivot_longer(cols = starts_with("A"), names_to = "q2", values_to = "Q3_score") %>% 
+  pivot_longer(cols = starts_with("z"), names_to = "q2", values_to = "Q3_score") %>% 
   filter(abs(Q3_score) > 0.2) %>% 
   filter(parse_number(q1) < parse_number(q2)) %>%
   gt()

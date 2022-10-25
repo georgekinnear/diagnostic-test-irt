@@ -41,7 +41,8 @@ Information about the test:
 ```{r load-test-info, echo=FALSE, message=FALSE}
 item_info <- read_csv("data-uoe/edinburgh-diagtest-metadata.csv") %>% 
   select(question = pre, description, MATH_group) %>% 
-  filter(!is.na(question))
+  filter(!is.na(question)) %>% 
+  mutate(question = str_replace(question, "A", "e"))
 
 item_info %>%
   gt() %>%
@@ -65,8 +66,8 @@ test_scores <-
   ) %>%
   mutate(year = str_remove(cohort, "data-uoe/ANON_") %>% str_remove(., "diagtest_detail.csv"))%>% 
   filter(!is.na(Total)) %>%
-  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "A")) %>% 
-  select(year, AnonID, Total, starts_with("A"))
+  rename_with(.cols = starts_with("Q"), .fn = ~ str_replace(., "Q", "e")) %>% 
+  select(year, AnonID, Total, starts_with("e"))
 
 test_scores_unfiltered <- test_scores
 ```
@@ -96,7 +97,7 @@ test_scores <- test_scores_unfiltered %>%
   slice_max(Total, n = 1) %>% 
   ungroup() %>% 
   rowwise() %>% 
-  mutate(zeros_in_easiest_5 = sum(A11==0, A12==0, A13==0, A16==0, A17==0)) %>% 
+  mutate(zeros_in_easiest_5 = sum(e11==0, e12==0, e13==0, e16==0, e17==0)) %>% 
   filter(zeros_in_easiest_5 <= 2 | Total >= 30) %>% 
   select(-zeros_in_easiest_5) %>% 
   ungroup()
@@ -233,7 +234,7 @@ This plot shows the correlations between scores on each pair of items:
 
 ```{r corr-plot}
 item_scores <- test_scores %>% 
-  select(starts_with("A"), -AnonID)
+  select(starts_with("e"), -AnonID)
 
 cor_ci <- psych::corCi(item_scores, plot = FALSE)
 
@@ -412,7 +413,7 @@ load2 %>%
 
 The first factor is dominated by questions that had previously been identified as MATH Group B, i.e. those that are somehow "non-standard" -- either requiring students to recognise that a particular rule/procedure is applicable before applying it, or to apply it in an unusual way. This factor also includes Group A questions on "pre-calculus" topics (such as fractions, logarithms and trigonometry) that students had perhaps not explicitly practiced most recently.
 
-The second factor is dominated by the two chain rule questions (A16 and A17), along with A18 which is a routine definite integral, suggesting this factor is related to routine calculus computations.
+The second factor is dominated by the two chain rule questions (e16 and e17), along with e18 which is a routine definite integral, suggesting this factor is related to routine calculus computations.
 
 The third factor seems to be based on applying calculus techniques to cubic and quadratic curves, e.g. to find tangent lines or stationary points.
 
@@ -484,13 +485,13 @@ This shows that most item pairs are independent, with only one pair showing caus
 residuals %>%
   rownames_to_column(var = "item1") %>%
   as_tibble() %>% 
-  pivot_longer(cols = starts_with("A"), names_to = "item2", values_to = "Q3_score") %>% 
+  pivot_longer(cols = !item1, names_to = "item2", values_to = "Q3_score") %>% 
   filter(abs(Q3_score) > 0.2) %>% 
   filter(parse_number(item1) < parse_number(item2)) %>%
   gt()
 ```
 
-Items A16 and A17 are on the chain rule (e.g. differentiating $\cos(4x^2+5)$ and $(3x^2-8)^3$ respectively), so it is perhaps unsurprising that students' performance on these items is not entirely independent.
+Items e16 and e17 are on the chain rule (e.g. differentiating $\cos(4x^2+5)$ and $(3x^2-8)^3$ respectively), so it is perhaps unsurprising that students' performance on these items is not entirely independent.
 
 Given that this violation of the local independence assumption is very mild, we proceed using this model.
 
@@ -769,7 +770,7 @@ ggsave(plot = plt, file = "output/uoe_pre_iccs-superimposed.pdf", width = 20, he
 
 ```{r}
 highlight_removed_items <- expected_scores %>% 
-  mutate(highlight_item = item %in% c("A2", "A8", "A11")) %>% 
+  mutate(highlight_item = item %in% c("e2", "e8", "e11")) %>% 
   mutate(line_width = ifelse(highlight_item, 1, 0.5))
 
 highlight_removed_items %>% 

@@ -50,7 +50,9 @@ test_scores_pre <- scores_pre %>%
     file_path = str_remove(file_path, "-q36"),
     file_path = str_remove(file_path, ".csv"),
     ) %>%
-  separate(file_path, c("year", "class"), sep = "/")
+  separate(file_path, c("year", "class"), sep = "/") %>% 
+  # relabel the columns to use z rather than A for the question names
+  rename_with(~ str_replace(., "^A", "z"))
 
 
 # produce list of all the relevant file names
@@ -68,8 +70,8 @@ test_scores_post <- scores_post %>%
     file_path = str_remove(file_path, ".csv"),
     ) %>%
   separate(file_path, c("year", "class"), sep = "/") %>% 
-  # relabel the columns to use B rather than A for the question names
-  rename_with(~ str_replace(., "^A", "B"))
+  # relabel the columns to use Z rather than A for the question names
+  rename_with(~ str_replace(., "^A", "Z"))
 
 #
 # Join data from both test versions together
@@ -83,10 +85,14 @@ test_scores_post <- scores_post %>%
 # (A0 and B0 are used to indicate the question did not appear on that version)
 test_versions <- read_csv("data-eth/eth-metadata.csv") %>% 
   mutate(
+    pre = str_replace(pre, "A", "z"),
+    post = str_replace(post, "B", "Z")
+  ) %>% 
+  mutate(
     label = case_when(
       !is.na(pre) & !is.na(post) ~ str_glue("{pre}_{post}"),
-      !is.na(pre) & is.na(post) ~ str_glue("{pre}_B0"),
-      is.na(pre) & !is.na(post) ~ str_glue("A0_{post}"),
+      !is.na(pre) & is.na(post) ~ str_glue("{pre}_Z0"),
+      is.na(pre) & !is.na(post) ~ str_glue("z0_{post}"),
     ),
     item_num = row_number()
   ) %>% 
@@ -135,7 +141,7 @@ For this analysis, we replace the "2 = I don't know" scores with 0, reflecting a
 
 ```{r}
 test_scores <- test_scores %>% 
-  mutate(across(starts_with("A"), ~ ifelse(. == 2, 0, .)))
+  mutate(across(starts_with("z"), ~ ifelse(. == 2, 0, .)))
 ```
 
 ## Data summary
@@ -217,7 +223,7 @@ For this analysis, we use the 2 parameter logistic (2PL) model.
 ```{r fit-mirt, warning=FALSE, message=FALSE, cache=TRUE}
 # save just the matrix of scores
 item_scores <- test_scores %>% 
-  select(matches("^A\\d"))
+  select(matches("^z\\d"))
 
 fit_2pl <- mirt(
   data = item_scores, # just the columns with question scores
@@ -247,7 +253,7 @@ This shows that most item pairs are independent, with only a couple of pairs sho
 residuals_2pl %>%
   rownames_to_column(var = "item1") %>%
   as_tibble() %>% 
-  pivot_longer(cols = starts_with("A"), names_to = "item2", values_to = "Q3_score") %>% 
+  pivot_longer(cols = starts_with("z"), names_to = "item2", values_to = "Q3_score") %>% 
   filter(abs(Q3_score) > 0.2) %>% 
   filter(parse_number(item1) < parse_number(item2)) %>%
   gt()
@@ -255,9 +261,9 @@ residuals_2pl %>%
 
 In fact, both of these pairs highlight questions that were removed from the test:
 
-* A18 and A19 are on the product and quotient rules, and only A18 was retained on the new test,
+* z18 and z19 are on the product and quotient rules, and only z18 was retained on the new test,
 
-* A34 and A35 are both about vectors; only A34 was retained (in modified form, as B30)
+* z34 and z35 are both about vectors; only z34 was retained (in modified form, as Z30)
 
 Given that this violation of the local independence assumption is very mild, we proceed using this model.
 
@@ -504,7 +510,7 @@ info_comparison_data <- item_info_data %>%
 ```{r fig.height=3, fig.width=4}
 test_info_total_plot <- info_comparison_data %>% 
   filter(items %in% c("pre", "post")) %>% 
-  mutate(items = case_when(items == "pre" ~ "Version A", items == "post" ~ "Version B")) %>% 
+  mutate(items = case_when(items == "pre" ~ "Version 1", items == "post" ~ "Version 2")) %>% 
   #mutate(items = fct_relevel(items, "pre", "post")) %>% 
   ggplot(aes(x = theta, y = info_y, colour = items, linetype = items)) +
   geom_line() +
@@ -617,7 +623,7 @@ Here we redo the factor analysis, but using only the data from the new version o
 ```{r}
 item_scores_B <- test_scores %>% 
   select(-F1) %>% 
-  select(-contains("B0")) %>% 
+  select(-contains("Z0")) %>% 
   filter(test_version == "post") %>% 
   select(-class, -year, -test_version)
 ```
@@ -673,7 +679,7 @@ load <- tidy(fitfact)
 ```{r warning=FALSE}
 ggplot(load, aes(x = fl1, y = 0)) + 
   geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  geom_label_repel(aes(label = paste0("Z", rownames(load))), show.legend = FALSE) +
   labs(x = "Factor 1", y = NULL,
        title = "Standardised Loadings", 
        subtitle = "Based upon correlation matrix") +
@@ -712,7 +718,7 @@ load4 <- tidy(fitfact4)
 ```{r}
 ggplot(load4, aes(x = fl1, y = fl2)) + 
   geom_point() + 
-  geom_label_repel(aes(label = paste0("A", rownames(load))), show.legend = FALSE) +
+  geom_label_repel(aes(label = paste0("Z", rownames(load))), show.legend = FALSE) +
   labs(x = "Factor 1", y = "Factor 2",
        title = "Standardised Loadings", 
        subtitle = "Based upon correlation matrix") +
